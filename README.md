@@ -1,6 +1,6 @@
 # Competition
 
-1.下载git
+1.安装git
 
 2.在初赛解压目录下运行
 ```
