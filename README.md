@@ -13,6 +13,7 @@ git pull https://github.com/birdsFloat/Competition.git main
 
 5.其它操作
     add \<filepath\>更新项目文件，commit -m "\<commitMessage\>"将文件在本地提交，status查看文件树，push \<project\> \<branch\>同步到github）
+    
     >添加文件并同步到github示例
     ```
     git add data/dataInspect.ipynb
