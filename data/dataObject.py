@@ -57,7 +57,7 @@ class DataSet():
             time = 0
             while(lineNum<len(lines)):
                 if(lines[lineNum].startswith("TIMESTAMP")):
-                    sline = lines[lineNum].split(' ')
+                    sline = lines[lineNum].split()
                     assert(len(sline)==2)
                     time = int(sline[1])
                     lineNum += 1
@@ -65,9 +65,9 @@ class DataSet():
                 delNum = int(lines[lineNum])
                 lineNum += 1
                 for i in range(delNum):
-                    sline = lines[lineNum]
+                    sline = lines[lineNum].split()
                     assert(len(sline)==1)
-                    objList = self.objDict.get(int(sline))
+                    objList = self.objDict.get(int(sline[0]))
                     assert(objList)
                     objList[-1].setDelete(time)
                     #print('delete on time:'+str(time))
@@ -92,7 +92,8 @@ class DataSet():
                     assert(objList)
                     objList[-1].addRequest(sline[0], time)
                     lineNum += 1
-                assert(lines[lineNum].startswith("TIMESTAMP"))
+                if(lineNum<self.TOLTIME):
+                    assert(lines[lineNum].startswith("TIMESTAMP"))
     def timeBucketNumByTag(self, interval, tag, type, offset = 1):
         """
         获取以interval为桶宽的时间桶内的属于特定tag的操作对象数目。
@@ -192,11 +193,14 @@ class dataListInfo:
         self.lineWidth = lineWidth
         self.color = color
 
-def doubleYPlot(xlist:List, yListInfo1:dataListInfo, yListInfo2:dataListInfo, xlabel='', axis = None):
+def doubleYPlot(xlist:List, yListInfo1:dataListInfo, yListInfo2:dataListInfo, axis = None, xlabel = None):
     yListInfo = [yListInfo1, yListInfo2]
     colors = [yListInfo[0].color, yListInfo[1].color]
-    if(not axis):
+    if not axis:
         axis = plt.subplot()
+        if xlabel:
+            axis.set_xlabel(xlabel)
+    # axis.set_xlabel(xlabel)#不清楚原因，无法在这个函数内设置xlabel
     axises = [None, None]
     axises[0] = axis
     axises[1] = axises[0].twinx()
@@ -213,6 +217,4 @@ def doubleYPlot(xlist:List, yListInfo1:dataListInfo, yListInfo2:dataListInfo, xl
             axises[sq].tick_params(axis='y', colors=colors[sq])
         if(yListInfo[sq].curveLegend != ''):
             axises[sq].legend(loc = 'upper right')
-
-    plt.xlabel(xlabel)
     plt.plot()
