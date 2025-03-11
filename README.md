@@ -9,7 +9,7 @@
 4.键入pull命令拉取项目。
 ```
 git pull https://github.com/birdsFloat/Competition.git main
-
+```
 
 5.其它操作
     
