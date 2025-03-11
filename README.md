@@ -9,26 +9,25 @@
 4.键入pull命令拉取项目。
 ```
 git pull https://github.com/birdsFloat/Competition.git main
-```
+
 
 5.其它操作
     
-    add \<filepath\>更新项目文件，commit -m "\<commitMessage\>"将文件在本地提交，status查看文件树，push \<project\> \<branch\>同步到github
+add \<filepath\>更新项目文件，commit -m "\<commitMessage\>"将文件在本地提交，status查看文件树，push \<project\> \<branch\>同步到github
     
-    >添加文件并同步到github示例
-    ```
-    \#添加新文件/有改动的文件到暂存区
-    git add data/dataInspect.ipynb
-    \#提交到本地
-    git commit -m "Update dataInspect.ipynb. Add new function 'drawDoubleYAxis()'"
-    \#查看当前文件树状态
-    git status
-    \#同步github项目的mian分支到本地（push之前pull，防止本地还未同步到github最新修改，导致项目冲突无法push）
-    git pull https://github.com/birdsFloat/Competition.git main
-    \#同步本地git项目到github服务器的main分支
-    git push https://github.com/birdsFloat/Competition.git main
-    ```
-    <br>
+>添加文件并同步到github示例
+```
+\#添加新文件/有改动的文件到暂存区
+git add data/dataInspect.ipynb
+\#提交到本地
+git commit -m "Update dataInspect.ipynb. Add new function 'drawDoubleYAxis()'"
+\#查看当前文件树状态
+git status
+\#同步github项目的mian分支到本地（push之前pull，防止本地还未同步到github最新修改，导致项目冲突无法push）
+git pull https://github.com/birdsFloat/Competition.git main
+\#同步本地git项目到github服务器的main分支
+git push https://github.com/birdsFloat/Competition.git main
+```
 
 6.如果存在冲突无法提交项目，可以创建新分支
 
