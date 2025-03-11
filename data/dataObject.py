@@ -21,10 +21,11 @@ class DataObject():
 class DataSet():
     def __init__(self, dataFile):
         self.dataFile = dataFile
-        self.objDict:Dict[int, List[DataObject]] = {}#objid:[obj,],这是为了防止有
-        self.tagToDelList:Dict[int, List[int]] = {}
-        self.tagToReqList:Dict[int, List[int]] = {}
-        self.tagToWrtList:Dict[int, List[int]] = {}
+        self.objDict:Dict[int, List[DataObject]] = {}#objid:[obj,],这是为了防止有id重复
+        self.tagToObjList:Dict[int, List[DataObject]] = {}
+        self.tagToDelNumList:Dict[int, List[int]] = {}
+        self.tagToReqNumList:Dict[int, List[int]] = {}
+        self.tagToWrtNumList:Dict[int, List[int]] = {}
         self.getConstantAndStatics()
         self.countData()
     def getConstantAndStatics(self):
@@ -38,7 +39,7 @@ class DataSet():
             self.UNITNUM = int(user_input[3])
             self.TOKENNUM = int(user_input[4])
             
-            operateList = [self.tagToDelList, self.tagToWrtList, self.tagToReqList]
+            operateList = [self.tagToDelNumList, self.tagToWrtNumList, self.tagToReqNumList]
             for loop in range(3):
                 for tag in range(1, self.TAGNUM+1):
                     line = file.readline()
@@ -82,6 +83,10 @@ class DataSet():
                         self.objDict.get(int(sline[0])).append(dobj)
                     else:
                         self.objDict[int(sline[0])] = [dobj]
+                    if(self.tagToObjList.get(int(sline[2]))):
+                        self.tagToObjList.get(int(sline[2])).append(dobj)
+                    else:
+                        self.tagToObjList[int(sline[2])] = [dobj]
                     lineNum += 1
                 reqNum = int(lines[lineNum])
                 lineNum += 1
@@ -111,27 +116,25 @@ class DataSet():
             list:每个时间桶内的对象数目列表
         """
         bucketNum = [0 for _ in range(int((self.TOLTIME-offset)/interval)+1)]
-        for key, objList in self.objDict.items():
-            for obj in objList:
-                if(obj.tag != tag):
-                    continue
-                if(obj.createTime<offset):
-                    continue
-                if(type == 'create'):
-                    bucketNum[int((obj.createTime-offset)/interval)] += 1
-                elif(type == 'alive'):
-                    start = int((obj.createTime-offset)/interval)
-                    end = int((obj.deleteTime-offset)/interval)+1
-                    for p in range(start, end):
-                        bucketNum[p] += 1
-                elif(type == 'delete'):
-                    end = int((obj.deleteTime-offset)/interval)
-                    bucketNum[end] += 1
-                elif(type == 'request'):
-                    for req in obj.requestTmList:
-                        if(req<offset):
-                            continue
-                        bucketNum[int((req-offset)/interval)] += 1
+        objList = self.tagToObjList[tag]
+        for obj in objList:
+            if(obj.createTime<offset):
+                continue
+            if(type == 'create'):
+                bucketNum[int((obj.createTime-offset)/interval)] += 1
+            elif(type == 'alive'):
+                start = int((obj.createTime-offset)/interval)
+                end = int((obj.deleteTime-offset)/interval)+1
+                for p in range(start, end):
+                    bucketNum[p] += 1
+            elif(type == 'delete'):
+                end = int((obj.deleteTime-offset)/interval)
+                bucketNum[end] += 1
+            elif(type == 'request'):
+                for req in obj.requestTmList:
+                    if(req<offset):
+                        continue
+                    bucketNum[int((req-offset)/interval)] += 1
         return bucketNum
     def timeBucketNum(self, interval, type, offset = 1):
         """
@@ -176,10 +179,11 @@ class DataSet():
             list:属于每个tag的存储对象的数目列表
         """
         bucketNum = [0 for _ in range(self.TAGNUM)]
-        for key, objList in self.objDict.items():
-            for obj in objList:
-                bucketNum[obj.tag-1] += 1
+        for key, objList in self.tagToObjList.items():
+            bucketNum[key-1] = len(objList)
         return bucketNum
+    def getObjListByTag(self, tag:int):
+        return self.tagToObjList[tag]
 
 class dataListInfo:
     dataList:List = []
