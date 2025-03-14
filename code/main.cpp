@@ -5,18 +5,8 @@
 #include "thinker.h"
 #include "worker.h"
 
-Request request[MAX_REQUEST_NUM];
-Object object[MAX_OBJECT_NUM];
-
 extern int T, M, N, V, G;
 extern int disk[MAX_DISK_NUM][MAX_DISK_SIZE];
-
-void do_object_delete(const int* object_unit, int* disk_unit, int size)
-{
-    for (int i = 1; i <= size; i++) {
-        disk_unit[object_unit[i]] = 0;
-    }
-}
 
 void delete_action()
 {
@@ -128,12 +118,13 @@ void read_action()
         }
         printf("0\n");
     } else {
+        //这是跳读策略。
         current_phase++;
         object_id = request[current_request].object_id;
-        for (int i = 1; i <= N; i++) {
+        for (int i = 1; i <= N; i++) {//寻找对象id的磁盘位置。
             if (i == object[object_id].replica[1]) {
                 if (current_phase % 2 == 1) {
-                    printf("j %d\n", object[object_id].unit[1][current_phase / 2 + 1]);
+                    printf("j %d\n", object[object_id].unit[1][current_phase / 2 + 1]);//跳到第一个单元位置
                 } else {
                     printf("r#\n");
                 }
@@ -175,7 +166,6 @@ void letsGo(){
     printf("OK\n");
     fflush(stdout);
 }
-
 int main()
 {
     scanf("%d%d%d%d%d", &T, &M, &N, &V, &G);

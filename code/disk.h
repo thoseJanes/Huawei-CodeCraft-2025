@@ -3,59 +3,45 @@
 #include <stdexcept>
 #include <memory>
 #include "noncopyable.h"
+#include "global.h"
 #include <vector>
+#include "bufferSpace.h"
 
-class CircleSpace{
-public:
-    void initSpace(int size){
-        buffer = (int*)malloc(sizeof(int)*size);
-    }
-    int& operator[](int index){
-        index = index%bufLen;
-        return *(buffer+index);
-    }
-    ~CircleSpace(){
-        free(buffer);
-    }
-private:
-    int* buffer = nullptr;
-    int bufLen = 0;
-};
 
-class Disk{
+
+class Disk:noncopyable{
 private:
     int unitNum;
     int headPos;
-    CircleSpace space;
+    Dim1Space space;//直接用array？
+    int bestHeadPos;
 public:
     Disk(int unitNum, int headPos = 0){
         this->unitNum = unitNum;
         this->headPos = headPos;
         space.initSpace(unitNum);
     }
-
+    int bestHeadPos(int timeStamp){
+        
+    }
 };
 
-class DiskGroup{
+class DiskManager{
 public:
-    DiskGroup(){};
+    DiskManager(){};
     void addDisk(Disk* diskptr){
         diskGroup.push_back(diskptr);
     }
-    Disk* operator[](int index){
-        if(index<0||index>diskGroup.size()){
-            throw std::out_of_range("disk out of range!");
-        }
-        return diskGroup[index];
-    }
-    ~DiskGroup(){
+    ~DiskManager(){
         for(int i=0;i<diskGroup.size();i++){
             delete diskGroup[i];
         }
     }
+    void assignSpace(StorageObject& obj){
+        //分配空间策略
+    }
 private:
     std::vector<Disk*> diskGroup;
 };
-
 
 #endif
