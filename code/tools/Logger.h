@@ -1,7 +1,10 @@
+#ifndef LOGGER_H
+#define LOGGER_H
 #include <memory>
 #include <string.h>
 #include <string>
 #include <stdio.h>
+#include <functional>  
 using namespace std;
 
 
@@ -198,7 +201,7 @@ public:
         NUM_LOG_LEVELS,
     };
     Logger(SourceFile file, int line);
-    Logger(SourceFile file, int line, StringLike logFilePath);//输出到文件。
+    Logger(SourceFile file, int line, const char* func, string logFileName);//输出到文件。
     Logger(SourceFile file, int line, LogLevel level);
     Logger(SourceFile file, int line, LogLevel level, const char* func);
     Logger(SourceFile file, int line, bool toAbort);
@@ -209,12 +212,12 @@ public:
     static LogLevel logLevel();
     static void setLogLevel(LogLevel level);
 
-    typedef void (*OutputFunc)(const char* msg, int len);
-    typedef void (*FlushFunc)();
-    OutputFunc l_output;
-    FlushFunc l_flush;
-    static void setGlobalOutput(OutputFunc);
-    static void setGlobalFlush(FlushFunc);
+    //typedef void (*OutputFunc)(const char* msg, int len);
+    //typedef void (*FlushFunc)();
+    //OutputFunc l_output;
+    //FlushFunc l_flush;
+    std::function<void(const char*, int)> l_output;
+    std::function<void()> l_flush;
 private:
     class Impl
     {
@@ -252,3 +255,9 @@ inline Logger::LogLevel Logger::logLevel()
 #define LOG_SYSERR Logger(__FILE__, __LINE__, false).stream()
 #define LOG_SYSFATAL Logger(__FILE__, __LINE__, true).stream()
 
+#define LOG_FILE(x) if (Logger::logLevel() <= Logger::DEBUG && LogFileManager::existFile(x)) \
+  Logger(__FILE__, __LINE__, __func__, x).stream()
+
+
+
+#endif

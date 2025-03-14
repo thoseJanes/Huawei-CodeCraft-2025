@@ -2,24 +2,14 @@
 #include <cassert>
 #include <cstdlib>
 #include "global.h"
-#include "operation.h"
-
+#include "thinker.h"
+#include "worker.h"
 
 Request request[MAX_REQUEST_NUM];
 Object object[MAX_OBJECT_NUM];
 
 extern int T, M, N, V, G;
 extern int disk[MAX_DISK_NUM][MAX_DISK_SIZE];
-extern int disk_point[MAX_DISK_NUM];
-
-void timestamp_action()
-{
-    int timestamp;
-    scanf("%*s%d", &timestamp);
-    printf("TIMESTAMP %d\n", timestamp);
-
-    fflush(stdout);
-}
 
 void do_object_delete(const int* object_unit, int* disk_unit, int size)
 {
@@ -181,37 +171,23 @@ void clean()
     }
 }
 
+void letsGo(){
+    printf("OK\n");
+    fflush(stdout);
+}
+
 int main()
 {
     scanf("%d%d%d%d%d", &T, &M, &N, &V, &G);
 
-    for (int i = 1; i <= M; i++) {
-        for (int j = 1; j <= (T - 1) / FRE_PER_SLICING + 1; j++) {
-            scanf("%*d");
-        }
-    }
-
-    for (int i = 1; i <= M; i++) {
-        for (int j = 1; j <= (T - 1) / FRE_PER_SLICING + 1; j++) {
-            scanf("%*d");
-        }
-    }
-
-    for (int i = 1; i <= M; i++) {
-        for (int j = 1; j <= (T - 1) / FRE_PER_SLICING + 1; j++) {
-            scanf("%*d");
-        }
-    }
-
-    printf("OK\n");
-    fflush(stdout);
-
-    for (int i = 1; i <= N; i++) {
-        disk_point[i] = 1;
-    }
+    Thinker thinker;
+    thinker.swallowStatistics();
+    letsGo();
 
     for (int t = 1; t <= T + EXTRA_TIME; t++) {
-        timestamp_action();
+        PocketWatch::clock();
+        thinker.correctPocketWatch();
+        
         delete_action();
         write_action();
         read_action();

@@ -1,4 +1,5 @@
 #include "Logger.h"
+#include "LogFile.h"
 
 #include <algorithm>
 #include <limits>
@@ -382,6 +383,55 @@ void defaultFlush()
     fflush(stdout);
 }
 
+
+Logger::Logger(SourceFile file, int line)
+  : impl_(INFO, 0, file, line), l_output(defaultOutput), l_flush(defaultFlush)
+{
+}
+
+Logger::Logger(SourceFile file, int line, const char* func, string logFileName)
+  : impl_(INFO, 0, file, line)
+{
+  assert(LogFileManager::existFile(logFileName));
+  l_output = std::bind(&LogFile::append, LogFileManager::getLogFile(logFileName),
+                std::placeholders::_1, std::placeholders::_2);
+  l_flush = std::bind(&LogFile::flush, LogFileManager::getLogFile(logFileName));
+  //g_output = 在LogFileManager中注册的函数作为匿名函数。
+  //g_flush = 在...
+}
+
+Logger::Logger(SourceFile file, int line, LogLevel level, const char* func)
+  : impl_(level, 0, file, line), l_output(defaultOutput), l_flush(defaultFlush)
+{
+  impl_.stream_ << func << ' ';
+}
+
+Logger::Logger(SourceFile file, int line, LogLevel level)
+  : impl_(level, 0, file, line), l_output(defaultOutput), l_flush(defaultFlush)
+{
+}
+
+Logger::Logger(SourceFile file, int line, bool toAbort)
+  : impl_(toAbort?FATAL:ERROR, errno, file, line), l_output(defaultOutput), l_flush(defaultFlush)
+{
+}
+
+Logger::~Logger()
+{
+  //impl_在logger创建时初始化，会给logger的logstream添加时间、线程id、日志级别等信息，
+  //而logger销毁时，impl_的finish会添加文件名和行号
+  impl_.finish();
+  const LogStream::Buffer& buf(stream().buffer());
+  l_output(buf.data(), buf.length());
+  if (impl_.level_ == FATAL)
+  {
+    l_flush();
+    abort();
+  }
+}
+
+
+
 Logger::LogLevel initLogLevel()
 {
     if (::getenv("LOG_TRACE"))
@@ -392,72 +442,10 @@ Logger::LogLevel initLogLevel()
         return Logger::INFO;
 }
 
-Logger::OutputFunc g_output = defaultOutput;
-Logger::FlushFunc g_flush = defaultFlush;
 Logger::LogLevel g_logLevel = initLogLevel();
-
-Logger::Logger(SourceFile file, int line)
-  : impl_(INFO, 0, file, line), l_output(g_output), l_flush(g_flush)
-{
-}
-
-Logger::Logger(SourceFile file, int line, StringLike logFilePath)
-  : impl_(INFO, 0, file, line)
-{
-  //g_output = 在LogFileManager中注册的函数作为匿名函数。
-  //g_flush = 在...
-}
-
-Logger::Logger(SourceFile file, int line, LogLevel level, const char* func)
-  : impl_(level, 0, file, line), l_output(g_output), l_flush(g_flush)
-{
-  impl_.stream_ << func << ' ';
-}
-
-Logger::Logger(SourceFile file, int line, LogLevel level)
-  : impl_(level, 0, file, line), l_output(g_output), l_flush(g_flush)
-{
-}
-
-Logger::Logger(SourceFile file, int line, bool toAbort)
-  : impl_(toAbort?FATAL:ERROR, errno, file, line), l_output(g_output), l_flush(g_flush)
-{
-}
-
-
-
-
 
 void Logger::setLogLevel(Logger::LogLevel level)
 {
   g_logLevel = level;
 }
-
-void Logger::setGlobalOutput(OutputFunc out)
-{
-  g_output = out;
-}
-
-void Logger::setGlobalFlush(FlushFunc flush)
-{
-  g_flush = flush;
-}
-
-Logger::~Logger()
-{
-  //impl_在logger创建时初始化，会给logger的logstream添加时间、线程id、日志级别等信息，
-  //而logger销毁时，impl_的finish会添加文件名和行号
-  impl_.finish();
-  const LogStream::Buffer& buf(stream().buffer());
-  g_output(buf.data(), buf.length());
-  if (impl_.level_ == FATAL)
-  {
-    g_flush();
-    abort();
-  }
-}
-
-
-
-
 

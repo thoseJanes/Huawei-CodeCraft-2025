@@ -61,22 +61,30 @@ size_t AppendFile::write(const char* logline, size_t len)
 }
 
 
-
-LogFile::LogFile(const string& basename,
-                 off_t rollSize,
-                 bool threadSafe,
-                 int flushInterval,
-                 int checkEveryN)
-  : basename_(basename),
-    rollSize_(rollSize),
-    flushInterval_(flushInterval),
-    checkEveryN_(checkEveryN),
-    count_(0),
-    startOfPeriod_(0),
-    lastRoll_(0),
-    lastFlush_(0)
+TimeRoller::TimeRoller(const string& basename,
+                off_t rollSize,
+                int checkEveryN = 1024)
+                  : basename_(basename),
+                rollSize_(rollSize),
+                checkEveryN_(checkEveryN),
+                count_(0),
+                startOfPeriod_(0),
+                lastRoll_(0)
 {
   assert(basename.find('/') == string::npos);
+}
+
+
+LogFile::LogFile(std::unique_ptr<FileRoller> roller, int flushInterval)
+  : flushInterval_(flushInterval),
+    lastFlush_(0)
+{
+  if(roller != nullptr){
+    roller_ = std::move(roller);
+  }else{
+    assert(false);
+  }
+  
   rollFile();
 }
 
@@ -84,7 +92,21 @@ LogFile::~LogFile() = default;
 
 void LogFile::append(const char* logline, int len)
 {
-    append_unlocked(logline, len);
+  file_->append(logline, len);
+
+  //roll
+  time_t now = ::time(NULL);
+  if(roller_ && roller_->judgeRoll(file_.get(), now)){
+    rollFile();
+    lastFlush_ = now;
+  }
+
+  //flush
+  if (now - lastFlush_ > flushInterval_)
+  {
+    lastFlush_ = now;
+    file_->flush();
+  }
 }
 
 void LogFile::flush()
@@ -92,13 +114,24 @@ void LogFile::flush()
     file_->flush();
 }
 
-void LogFile::append_unlocked(const char* logline, int len)
+void LogFile::rollFile()
 {
-  file_->append(logline, len);
+  time_t now = ::time(NULL);
+  lastFlush_ = now;
+  string filename = roller_->generateFileName();//basename_, &now
+  file_.reset(new AppendFile(filename));
+}
 
+void TimeRoller::freshRoll(){
+  lastRoll_ = judgeTime_;
+  startOfPeriod_ = judgeTime_ / kRollPerSeconds_ * kRollPerSeconds_;
+}
+
+bool TimeRoller::judgeRoll(AppendFile* file_, time_t now){
+  judgeTime_ = now;
   if (file_->writtenBytes() > rollSize_)
   {
-    rollFile();
+    return true;
   }
   else
   {
@@ -106,51 +139,32 @@ void LogFile::append_unlocked(const char* logline, int len)
     if (count_ >= checkEveryN_)
     {
       count_ = 0;
-      time_t now = ::time(NULL);
       time_t thisPeriod_ = now / kRollPerSeconds_ * kRollPerSeconds_;
       if (thisPeriod_ != startOfPeriod_)
       {
-        rollFile();
-      }
-      else if (now - lastFlush_ > flushInterval_)
-      {
-        lastFlush_ = now;
-        file_->flush();
+        return true;
       }
     }
   }
 }
 
-bool LogFile::rollFile()
-{
-  time_t now = 0;
-  string filename = getLogFileName(basename_, &now);
-  time_t start = now / kRollPerSeconds_ * kRollPerSeconds_;
-
-  if (now > lastRoll_)
-  {
-    lastRoll_ = now;
-    lastFlush_ = now;
-    startOfPeriod_ = start;
-    file_.reset(new AppendFile(filename));
-    return true;
-  }
-  return false;
-}
-
-string LogFile::getLogFileName(const string& basename, time_t* now)
+string TimeRoller::generateFileName()
 {
   string filename;
-  filename.reserve(basename.size() + 64);
-  filename = basename;
+  filename.reserve(basename_.size() + 64);
+  filename = basename_;
 
   char timebuf[32];
   struct tm tm;
-  *now = time(NULL);
-  gmtime_s(&tm, now);//linux系统上为gmtime_r(now, &tm)
+
+  gmtime_s(&tm, &judgeTime_);//linux系统上为gmtime_r(now, &tm)
   strftime(timebuf, sizeof timebuf, ".%Y%m%d-%H%M%S.", &tm);
   filename += timebuf;
   filename += ".log";
 
   return filename;
 }
+
+
+
+

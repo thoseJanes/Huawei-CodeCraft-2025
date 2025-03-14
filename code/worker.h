@@ -1,5 +1,5 @@
-#if !defined(OPERATION_H)
-#define OPERATION_H
+#if !defined(WORKER_H)
+#define WORKER_H
 #include "global.h"
 
 typedef struct Request_ {
@@ -15,6 +15,8 @@ typedef struct Object_ {
     int last_request_point;
     bool is_delete;
 } Object;
+
+
 
 #endif // OPERATION_H
 

@@ -1,4 +1,4 @@
-#if !defined(GLOBAL_H)
+#ifndef GLOBAL_H
 #define GLOBAL_H
 
 #define MAX_DISK_NUM (10 + 1)
@@ -10,8 +10,6 @@
 #define EXTRA_TIME (105)
 
 extern int T, M, N, V, G;
-extern int disk[MAX_DISK_NUM][MAX_DISK_SIZE];
-extern int disk_point[MAX_DISK_NUM];
 
 #endif // GLOBAL_H
 
