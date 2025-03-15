@@ -5,7 +5,7 @@
 
 #define MAX_DISK_NUM (10 + 1)
 #define MAX_DISK_SIZE (16384 + 1)
-#define MAX_REQUEST_NUM (30000000 + 1)
+#define MAX_REQUEST_NUM (30000000 + 1)//4字节（32位）：范围是 [−2147483648,2147483647]
 #define MAX_OBJECT_NUM (100000 + 1)
 #define REP_NUM (3)
 #define FRE_PER_SLICING (1800)
@@ -22,6 +22,8 @@ public:
     static const int* const * wrtSta;
 };
 
+//历史数据，可以用来判断接下来的时间内请求或其它出现的概率。
+//但是，当以这种方式计算概率时，越接近桶边缘，则计算的概率有效期越短。
 class HistoryBucket{
 public:
     static void initBuckData(){

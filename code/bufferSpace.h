@@ -3,27 +3,34 @@
 #include <vector>
 #include "noncopyable.h"
 
+struct DiskUnit{
+    int objId;
+    char unitId;
+};
+
+template<typename T>
 class Dim1Space:noncopyable{
 public:
-    void initSpace(int size, int* buffer = nullptr){
-        if(buffer == nullptr){
-            buffer_ = (int*)malloc(sizeof(int)*size);
+    void initSpace(int size, T* units = nullptr){
+        if(units == nullptr){
+            units_ = (T*)malloc(sizeof(T)*size);
         }else{
-            buffer_ = buffer;
+            units_ = units;
         }
+        bufLen = size;
     }
-    int& operator[](int index){
+    T& operator[](int index){
         if(index<0||index>=bufLen){
             throw std::out_of_range("space out of range!");
         }
         //index = index%bufLen;
-        return *(buffer_+index);
+        return *(units_+index);
     }
     ~Dim1Space(){
-        free(buffer_);
+        free(units_);
     }
 private:
-    int* buffer_ = nullptr;
+    T* units_ = nullptr;
     int bufLen = 0;
 };
 
@@ -42,7 +49,7 @@ public:
                 start += col;
             }
         }
-        dim1Space.push_back(Dim1Space());
+        dim1Space.push_back(Dim1Space<int>());
 
     }
     int*& operator[](int row){
@@ -57,7 +64,7 @@ public:
         //delete dim1Space;
     }
 private:
-    std::vector<Dim1Space> dim1Space;
+    std::vector<Dim1Space<int>> dim1Space;
     int** buffer_;
     int bufRow = 0;
     int bufCol = 0;
