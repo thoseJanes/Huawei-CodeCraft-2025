@@ -7,27 +7,29 @@ struct SpaceUnitNode{
     SpaceUnitNode(int value):pos(value){}
 };
 
-struct SpacePieceNode:public SpaceUnitNode{
+class SpacePieceNode{
+private:
+    int pos;
     int len;
     SpacePieceNode* next;
-    SpacePieceNode(int value, int length) : SpaceUnitNode(value), len(length), next(nullptr) {}
+    //int tagStart;//取边缘的10个位置代表tag的主要成分？
+    //int tagEnd;
+    friend class CircularSpacePiece;
+public:
+    SpacePieceNode(int value, int length) : pos(value), len(length), next(nullptr) {}
+    const SpacePieceNode* getNext(){return const_cast<const SpacePieceNode*>(next);}
+    int getLen(){return len;}
 };
 
-// 存放空间的循环链表。
-// 是否用红黑树来存储会更合适？待改进。
+// store free space of disk.
+// TO BE UPDATED: use red-black tree
 class CircularSpacePiece {
 private:
     typedef SpacePieceNode Node;
     Node* head;
     int spaceSize;
     int tolSpace;
-public:
-    CircularSpacePiece(int size, int tolspace) :tolSpace(tolspace), spaceSize(size), head(new Node(0, tolSpace)) {}
-
-    int getDistance(int target, int base){//磁头(只能单向移动)。目标位置from相对于基准位置base的移动距离。
-        return (target - base + spaceSize)%spaceSize;
-    }
-
+    
     //如果链表中节点起始位置没有重复，那么返回的aheadNode与head的距离会 刚好 小于等于 start与head的距离。
     Node* getAheadNode(int start){
         int headpos = head->pos;
@@ -45,6 +47,13 @@ public:
         return nodeAhead;
     }
     
+public:
+    CircularSpacePiece(int size) :spaceSize(size), tolSpace(size), head(new Node(0, spaceSize)) {}
+
+    int getDistance(int target, int base){//磁头(只能单向移动)。目标位置from相对于基准位置base的移动距离。
+        return (target - base + spaceSize)%spaceSize;
+    }
+
     //尝试把前面的节点nodeAhead与后面起始点为start，长度为len的节点合并。
     //如果合并成功，将会修改nodeAhead的长度。
     bool testMerge(Node* nodeAhead, int start, int len, bool allowOverlap){
@@ -72,7 +81,7 @@ public:
     }
     
     //根据start，插入+合并，如果插入的空白区域与已有空白区域重叠，则会报错。
-    void insert(int start, int len) {
+    void dealloc(int start, int len) {
         if (head == nullptr) {
             Node* newNode = new Node(start, len);
             head = newNode;
@@ -100,12 +109,12 @@ public:
             nodeAhead->next = newNode;//若newNode=nodeAhead，也没毛病。
             newNode->next = nodeAfter;
         }
+        tolSpace += len;
     }
-
     //尝试分配空间，如果成功，将会修改空间节点。
-    bool testPop(int start, int len){
+    bool testAlloc(int start, int len){
         if (head == nullptr) {
-            return nullptr;
+            return false;
         } else if(head==head->next) {
             Node* nodeAhead = getAheadNode(start);
             int startToAhead = getDistance(start, nodeAhead->pos);
@@ -114,11 +123,13 @@ public:
                     nodeAhead->pos += start;
                     nodeAhead->pos %= spaceSize;
                     nodeAhead->len -= len;
+                    tolSpace -= len;
                     return true;
                 }else if(nodeAhead->len == len){
                     if(nodeAhead->next == nodeAhead){//说明nodeAhead就是唯一的头节点。
                         head = nullptr;
                         delete nodeAhead;
+                        tolSpace -= len;
                         return true;//返回唯一的头节点。
                     }else{//nodeAhead还有后继。那么需要找到其前驱重新链表，然后返回nodeAhead。
                         Node* nodeBefore;
@@ -127,6 +138,7 @@ public:
                         }
                         nodeBefore->next = nodeAhead->next;
                         delete nodeAhead;
+                        tolSpace -= len;
                         return true;
                     }
                 }else{//没有足够的空间来分配！
@@ -137,12 +149,14 @@ public:
                 int endToAhead = getDistance((start+len)%spaceSize, nodeAhead->pos);
                 if(nodeAhead->len == endToAhead-1){//刚好在尾部。
                     nodeAhead->len -= len;
+                    tolSpace -= len;
                     return true;
                 }else if(nodeAhead->len < endToAhead-1){//在中间，需要分裂节点。
                     Node* splitNode = new Node((start+len+1)%spaceSize, nodeAhead->len-endToAhead-1);
                     nodeAhead->len = startToAhead;
                     splitNode->next = nodeAhead->next;
                     nodeAhead->next = splitNode;
+                    tolSpace -= len;
                     return true;
                 }else{//start+len在nodeAhead空间之外。
                     return false;
@@ -150,7 +164,18 @@ public:
             }
         }
     }
-    
+
+    //获取start后的第一个空节点，rotate控制是否转动链表使得head指向返回节点(这样在别的地方用start调用getAheadNode就很快了)。
+    const Node* getStartAfter(int start, bool rotate){
+        Node* node = getAheadNode(start);
+        if(rotate){
+            this->head = node;
+        }
+        return node;//转换为const，防止改变内容。但是也可以从外部改变node的next？如何解决？
+    }
+
+    int getTolSpace(){return tolSpace;}
+
     // // 打印链表
     // void print() {
     //     if (head == nullptr) {
@@ -186,7 +211,9 @@ public:
     }
 };
 
-//存放请求对象单元的循环链表。
+// store position of requested obj unit on disk
+// TO BE UPDATED: use red-black tree
+// 问题在于，需要轮转。可以存储头结点的位置，然后通过
 class CircularSpaceUnit{
 public:
     typedef SpaceUnitNode Node;
@@ -194,7 +221,12 @@ public:
     Node* head;
     CircularSpaceUnit():head(nullptr){};
     
-    
+    void addReqUnit(int unitPos){
+
+    }
+    void rmReqUnit(int unitPos){
+
+    }
 
 };
 

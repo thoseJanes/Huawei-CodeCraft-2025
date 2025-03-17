@@ -1,121 +1,189 @@
-#if !defined(WORKER_H)
+#ifndef WORKER_H
 #define WORKER_H
-#include "global.h"
-#include <algorithm>
 
-#define Object StorageObject
-class Request;
-class StorageObject;
-extern StorageObject* sObjectsPtr[MAX_OBJECT_NUM];
-extern Request* requestsPtr[MAX_REQUEST_NUM];
-extern StorageObject deletedObject;//作为一个被删除/不存在的对象。
-extern Request deletedRequest;
+#include <cstdio>
+#include <memory>
 
-class StorageObject{//由object来负责request的管理（创建/删除）
+#include "bucketData.h"
+#include "disk.h"
+#include "object.h"
+
+
+class Worker{//obj由它管理。
 public:
-    StorageObject(int size){
-        this->size = size;
-        this->unitReqNum = (int*)malloc((REP_NUM+1)*size*sizeof(int));//malloc分配0空间是合法操作。
-        for(int i=0;i<3;i++){
-            this->unitOnDisk[i] = this->unitReqNum + (i+1)*size;
+    Worker(){actionBuffer = (char*)malloc((G+10)*sizeof(char));memcpy(actionBuffer, '\0', (G+10)*sizeof(char));};
+    //接收头部统计数据
+    void swallowStatistics(){
+        int StaNum = (T - 1) / FRE_PER_SLICING + 1;
+        int* start = (int*)malloc(3*M*StaNum*sizeof(int));
+        int** ptrStart = (int**)malloc(3*M*sizeof(int*));
+        int* temp = start;
+        for(int k=0;k<3;k++){
+            for(int i=0;i<M;i++){
+                ptrStart[i+M*k] = temp;
+                temp = temp + StaNum;
+            }
+        }
+        StatisticsBucket::initBuckData(ptrStart, ptrStart+M, ptrStart+2*M);
+
+        for (int k=1; k <= 3; k++){
+            for (int i = 1; i <= M; i++) {
+                for (int j = 1; j <= StaNum; j++) {
+                    scanf("%d", start);//start已经是指针位置了。
+                    start += 1;
+                }
+            }
         }
     }
-    void commitUnit(int unit){
-        if(unit>=size){
-            throw std::out_of_range("obj unit out of range!");
+    //利用请求的有序性来清除多余请求。但是需要反映到相应对象和存储空间中！
+    void clearOvertimeReq(){
+        int timeBound = Watch::getTime() - 105;
+        //删除的request的reqId为-1.
+        while(requestsPtr[overtimeReqTop]->reqId>=0 && timeBound > requestsPtr[overtimeReqTop]->createdTime){
+            auto req = requestsPtr[overtimeReqTop];
+            //先消除obj的统计数据影响
+            auto obj = sObjectsPtr[req->objId];
+            //删除obj内部的请求。这是为了确认顺序。主要用于log阶段。其实可以删除。
+            {
+                if(obj->objRequests[0]==req){
+                    ;
+                }else{
+                    assert(false);
+                }
+            }
+            //更新obj内部的Request和单元请求数，更新disk内的请求单元链表。
+            auto overtimeReqUnits = obj->dropRequest(overtimeReqTop);
+            diskManager.freshOvertimeReqUnits(*obj, overtimeReqUnits);
+
+            overtimeReqTop += 1;//静态变量加一，循环停止时，当前req即有效。
+        }
+    }
+    //刷新磁盘磁头令牌
+    void freshDiskTokens(){
+        this->diskManager.freshTokens();
+    }
+    //同步时间
+    void correctWatch(){
+        int timestamp;
+        scanf("%*s%d", &timestamp);
+        int timeDelay = Watch::correct(timestamp);
+        printf("TIMESTAMP %d\n", Watch::getTime());
+        fflush(stdout);
+    };
+    
+    
+    //接收、处理、输出删除数据。
+    void processDelete(){
+        //接收数据和处理数据
+        int n_delete;
+        int id;
+        std::vector<int> requestIds = {};
+        scanf("%d", &n_delete);
+        for (int i = 1; i <= n_delete; i++) {
+            scanf("%d", &id);
+            Object* obj = sObjectsPtr[id];
+            HistoryBucket::addDel(1, obj->tag);
+            std::vector<Request*> requests = obj->objRequests;
+            for(int i=0;i<requests.size();i++){
+                requestIds.push_back(requests[i]->reqId);
+            }
+            diskManager.freeSpace(*obj);//删除磁盘空间。
+            deleteObject(id);//会删除obj和其关联的request
+        }
+
+        //输出数据
+        printf("%d\n", requestIds.size());
+        for(int i=0;i<requestIds.size();i++){
+            printf("%d\n", requestIds[i]);
+        }
+        fflush(stdout);
+    }
+    //接收、处理、输出写入数据。
+    void processWrite(){
+        int n_write;
+        scanf("%d", &n_write);
+        for (int i = 0; i < n_write; i++) {
+            int id, size, tag;
+            scanf("%d%d%d", &id, &size, &tag);
+            tag -= 1;//内部用0 - M-1表示tag。输入、输出时都需要注意。
+            HistoryBucket::addWrt(1, tag);
+            Object* obj = new Object(id, tag);
+            diskManager.assignSpace(*obj);
+    
+            printf("%d\n", id);
+            for (int j = 0; j < REP_NUM; j++) {
+                printf("%d", obj->replica[j]+1);//内部用0 - N-1表示磁盘
+                for (int k = 0; k < size; k++) {
+                    printf(" %d", obj->unitOnDisk[j][k]+1);//内部用0 - V表示磁盘单元
+                }
+                printf("\n");
+            }
+        }
+        fflush(stdout);
+    }
+
+    void processRead(){
+        //接收数据并创建对象
+        int n_read;
+        int request_id, object_id;
+        scanf("%d", &n_read);
+        for (int i = 1; i <= n_read; i++) {
+            scanf("%d%d", &request_id, &object_id);
+            Object* obj = sObjectsPtr[object_id];
+            HistoryBucket::addReq(1, obj->tag);
+
+            obj->createRequest(request_id);
+            diskManager.freshNewReqUnits(*obj);
         }
         
-        int doneNum;
-        for(int i=objRequests.size()-1;i>=0;i--){
-            Request* request = objRequests[i];
-            request->commitUnit(unit);
-            if(request->is_done){
-                doneRequestIds.push_back(request->reqId);
-                //std::swap(objRequests[i], objRequests.back());swap会改变元素顺序。因此会改变请求到达顺序。
-                objRequests.erase(objRequests.begin()+i);
-                deleteRequest(request->reqId);
+        //规划读取过程。
+        std::vector<int> doneReqId = {};
+        auto headOperations = diskManager.planHeadMove(doneReqId);
+        
+        //输出读取过程。
+        for(int i=0;i<N;i++){//不同磁盘
+            auto headOperation = headOperations[i];
+            int bufCur = 0;
+            if(headOperation.size()>0 && headOperation[0].first==JUMP){//如果是跳操作。
+                bufCur += snprintf(actionBuffer, G+10, "j %d", headOperation[0].second+1);//注意内部表示与外部值的转换。+1
+            }else{//如果是读或走操作
+                for(int j=0;j<headOperation.size();j++){//多个操作遍历
+                    auto operate = headOperation[j];
+                    if(operate.first == PASS){
+                        for(int k=0;k<operate.second;k++){
+                            actionBuffer[bufCur] = 'p';
+                        }
+                        bufCur += operate.second;
+                    }else if(operate.first == READ){
+                        for(int k=0;k<operate.second;k++){
+                            actionBuffer[bufCur] = 'r';
+                        }
+                    }
+                }
+                actionBuffer[bufCur++] = '#';
+                actionBuffer[bufCur] = '\0';//在末尾添加字符。
             }
+            printf("%s\n", actionBuffer);
         }
-
-        this->unitReqNum[unit] = 0;
-    }
-    Request* createRequest(int reqId){
-        Request* request = new Request(reqId, objId);
-        if(request->objId == this->objId){
-            this->objRequests.push_back(request);
-            for(int i=0;i<size;i++){
-                this->unitReqNum[i] += 1;
-            }
-        }else{
-            assert((request->objId == this->objId));
+        //输出完成的请求。
+        printf("%d\n", doneReqId.size());
+        for(int i=0;i<doneReqId.size();i++){
+            printf("%d\n", doneReqId[i]);
         }
-        return request;
-    }
-    int size;//大小
     
-    //存储时由磁盘设置。
-    int replica[REP_NUM];//副本所在磁盘
-    int* unitReqNum;//相应位置单元上的剩余请求数
-    int* unitOnDisk[REP_NUM];//相应位置的单元存储在磁盘上的位置
+        fflush(stdout);
+    }
+
+
+
+
+    void checkDisk(Disk disk);//更新disk的信息
+private:
+    DiskManager diskManager;
+    char* actionBuffer;
     
-    int objId;
 
-    std::vector<Request*> objRequests;//sorted by time//不包含已完成请求。
-    std::vector<int> doneRequestIds;//已完成的请求。
-    //注意：如果一次取磁盘能满足多个请求，那么可以取得较大效益。
-    //可以以Object来组织请求。
-    ~StorageObject(){
-        for(int i=0;i<3;i++){
-            free(this->unitReqNum);//因为分配空间时是整块分配的，所以只需要释放起始空间。
-        }
-
-        //删除属于该对象的所有请求。
-        for(int i=0;i<objRequests.size();i++){
-            deleteRequest(objRequests.at(i)->reqId);//request的生命周期应该由object来掌管吗？
-        }
-    }
-};
-class Request {
-public:
-    Request(int reqId, int objId){
-        this->objId = objId;
-        this->reqId = reqId;
-        this->unitFlag = (bool*)malloc(sObjectsPtr[objId]->size*sizeof(bool));
-        this->is_done = -sObjectsPtr[objId]->size+1;
-    }
-    void commitUnit(int unit){
-        if(this->unitFlag[unit]){
-            is_done += 1;
-        }else{
-            this->unitFlag[unit] = 1;
-        }
-    }
-    int objId;
-    int reqId;
-    bool* unitFlag;
-    int is_done;
 };
 
 
-inline void deleteObject(int id){
-    StorageObject* object = sObjectsPtr[id];
-    if(object == &deletedObject){
-        assert(!(object == &deletedObject));
-    }
-    delete object;
-    sObjectsPtr[id] = &deletedObject;
-}
-inline void deleteRequest(int id){
-    Request* request = requestsPtr[id];
-    if(request == &deletedRequest){
-        assert(!(request == &deletedRequest));
-    }
-    delete request;
-    requestsPtr[id] = &deletedRequest;
-}
-
-
-#endif // OPERATION_H
-
-
-
+#endif

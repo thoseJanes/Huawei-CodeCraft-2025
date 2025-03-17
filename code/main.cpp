@@ -2,167 +2,11 @@
 #include <cassert>
 #include <cstdlib>
 #include "global.h"
-#include "thinker.h"
 #include "worker.h"
 
 extern int T, M, N, V, G;
-extern int disk[MAX_DISK_NUM][MAX_DISK_SIZE];
 
-void delete_action()
-{
-    int n_delete;
-    int abort_num = 0;
-    static int _id[MAX_OBJECT_NUM];
-
-    scanf("%d", &n_delete);
-    for (int i = 1; i <= n_delete; i++) {
-        scanf("%d", &_id[i]);
-    }
-
-    for (int i = 1; i <= n_delete; i++) {
-        int id = _id[i];
-        int current_id = object[id].last_request_point;
-        while (current_id != 0) {
-            if (request[current_id].is_done == false) {
-                abort_num++;
-            }
-            current_id = request[current_id].prev_id;
-        }
-    }
-
-    printf("%d\n", abort_num);
-    for (int i = 1; i <= n_delete; i++) {
-        int id = _id[i];
-        int current_id = object[id].last_request_point;
-        while (current_id != 0) {
-            if (request[current_id].is_done == false) {
-                printf("%d\n", current_id);
-            }
-            current_id = request[current_id].prev_id;
-        }
-        for (int j = 1; j <= REP_NUM; j++) {
-            do_object_delete(object[id].unit[j], disk[object[id].replica[j]], object[id].size);
-        }
-        object[id].is_delete = true;
-    }
-
-    fflush(stdout);
-}
-
-void do_object_write(int* object_unit, int* disk_unit, int size, int object_id)
-{
-    int current_write_point = 0;
-    for (int i = 1; i <= V; i++) {
-        if (disk_unit[i] == 0) {
-            disk_unit[i] = object_id;
-            object_unit[++current_write_point] = i;
-            if (current_write_point == size) {
-                break;
-            }
-        }
-    }
-
-    assert(current_write_point == size);
-}
-
-void write_action()
-{
-    int n_write;
-    scanf("%d", &n_write);
-    for (int i = 1; i <= n_write; i++) {
-        int id, size;
-        scanf("%d%d%*d", &id, &size);
-        object[id].last_request_point = 0;
-        for (int j = 1; j <= REP_NUM; j++) {
-            object[id].replica[j] = (id + j) % N + 1;
-            object[id].unit[j] = static_cast<int*>(malloc(sizeof(int) * (size + 1)));
-            object[id].size = size;
-            object[id].is_delete = false;
-            do_object_write(object[id].unit[j], disk[object[id].replica[j]], size, id);
-        }
-
-        printf("%d\n", id);
-        for (int j = 1; j <= REP_NUM; j++) {
-            printf("%d", object[id].replica[j]);
-            for (int k = 1; k <= size; k++) {
-                printf(" %d", object[id].unit[j][k]);
-            }
-            printf("\n");
-        }
-    }
-
-    fflush(stdout);
-}
-
-void read_action()
-{
-    int n_read;
-    int request_id, object_id;
-    scanf("%d", &n_read);
-    for (int i = 1; i <= n_read; i++) {
-        scanf("%d%d", &request_id, &object_id);
-        request[request_id].object_id = object_id;
-        request[request_id].prev_id = object[object_id].last_request_point;
-        object[object_id].last_request_point = request_id;
-        request[request_id].is_done = false;
-    }
-
-    static int current_request = 0;
-    static int current_phase = 0;
-    if (!current_request && n_read > 0) {
-        current_request = request_id;
-    }
-    if (!current_request) {
-        for (int i = 1; i <= N; i++) {
-            printf("#\n");
-        }
-        printf("0\n");
-    } else {
-        //这是跳读策略。
-        current_phase++;
-        object_id = request[current_request].object_id;
-        for (int i = 1; i <= N; i++) {//寻找对象id的磁盘位置。
-            if (i == object[object_id].replica[1]) {
-                if (current_phase % 2 == 1) {
-                    printf("j %d\n", object[object_id].unit[1][current_phase / 2 + 1]);//跳到第一个单元位置
-                } else {
-                    printf("r#\n");
-                }
-            } else {
-                printf("#\n");
-            }
-        }
-
-        if (current_phase == object[object_id].size * 2) {
-            if (object[object_id].is_delete) {
-                printf("0\n");
-            } else {
-                printf("1\n%d\n", current_request);
-                request[current_request].is_done = true;
-            }
-            current_request = 0;
-            current_phase = 0;
-        } else {
-            printf("0\n");
-        }
-    }
-
-    fflush(stdout);
-}
-
-void clean()
-{
-    for (auto& obj : object) {
-        for (int i = 1; i <= REP_NUM; i++) {
-            if (obj.unit[i] == nullptr)
-                continue;
-            free(obj.unit[i]);
-            obj.unit[i] = nullptr;
-        }
-    }
-}
-
-void letsGo(){
+void start(){
     printf("OK\n");
     fflush(stdout);
 }
@@ -170,19 +14,21 @@ int main()
 {
     scanf("%d%d%d%d%d", &T, &M, &N, &V, &G);
 
-    Thinker thinker;
-    thinker.swallowStatistics();
-    letsGo();
+    Worker worker;
+    worker.swallowStatistics();
+    start();
 
     for (int t = 1; t <= T + EXTRA_TIME; t++) {
-        PocketWatch::clock();
-        thinker.correctPocketWatch();
-        
-        delete_action();
-        write_action();
-        read_action();
+        Watch::clock();
+        worker.correctWatch();
+        worker.freshDiskTokens();
+        worker.clearOvertimeReq();
+
+        worker.processDelete();
+        worker.processWrite();
+        worker.processRead();
     }
-    clean();
+    //clean();
 
     return 0;
 }
