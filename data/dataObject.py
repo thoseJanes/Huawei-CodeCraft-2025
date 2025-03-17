@@ -26,8 +26,11 @@ class DataSet():
         self.tagToDelNumList:Dict[int, List[int]] = {}
         self.tagToReqNumList:Dict[int, List[int]] = {}
         self.tagToWrtNumList:Dict[int, List[int]] = {}
+        
+        self.maxSize = 0
         self.getConstantAndStatics()
         self.countData()
+        
     def getConstantAndStatics(self):
         '''获取硬件、时间步等信息'''
         with open(self.dataFile, 'r', encoding='utf-8') as file:
@@ -63,6 +66,7 @@ class DataSet():
                     time = int(sline[1])
                     lineNum += 1
                     continue
+                
                 delNum = int(lines[lineNum])
                 lineNum += 1
                 for i in range(delNum):
@@ -73,21 +77,29 @@ class DataSet():
                     objList[-1].setDelete(time)
                     #print('delete on time:'+str(time))
                     lineNum += 1
+                    
                 wrtNum = int(lines[lineNum])
                 lineNum += 1
                 for i in range(wrtNum):
                     sline = lines[lineNum].split()
                     assert(len(sline)==3)
-                    dobj = DataObject(int(sline[2]), int(sline[0]), int(sline[1]), time, self.TOLTIME)
-                    if(self.objDict.get(int(sline[0]))):
-                        self.objDict.get(int(sline[0])).append(dobj)
+                    objId = int(sline[0])
+                    objSize = int(sline[1])
+                    tag = int(sline[2])
+                    self.maxSize = objSize if self.maxSize<objSize else self.maxSize
+                    dobj = DataObject(tag, objId, objSize, time, self.TOLTIME)
+                    
+                    if(self.objDict.get(objId)):
+                        self.objDict.get(objId).append(dobj)
                     else:
-                        self.objDict[int(sline[0])] = [dobj]
-                    if(self.tagToObjList.get(int(sline[2]))):
-                        self.tagToObjList.get(int(sline[2])).append(dobj)
+                        self.objDict[objId] = [dobj]
+                        
+                    if(self.tagToObjList.get(tag)):
+                        self.tagToObjList.get(tag).append(dobj)
                     else:
-                        self.tagToObjList[int(sline[2])] = [dobj]
+                        self.tagToObjList[tag] = [dobj]
                     lineNum += 1
+                    
                 reqNum = int(lines[lineNum])
                 lineNum += 1
                 for i in range(reqNum):
@@ -184,6 +196,14 @@ class DataSet():
         return bucketNum
     def getObjListByTag(self, tag:int):
         return self.tagToObjList[tag]
+    def getSizeToCreateRequestByTag(self, tag):
+        sizeToRequest = [0 for _ in range(self.maxSize)]
+        sizeToCreate = [0 for _ in range(self.maxSize)]
+        objList = self.tagToObjList[tag]
+        for obj in objList:
+            sizeToRequest[obj.size-1] += len(obj.requestTmList)
+            sizeToCreate[obj.size-1] += 1
+        return sizeToCreate, sizeToRequest            
 
 class dataListInfo:
     dataList:List = []
@@ -208,6 +228,10 @@ def doubleYPlot(xlist:List, yListInfo1:dataListInfo, yListInfo2:dataListInfo, ax
     axises = [None, None]
     axises[0] = axis
     axises[1] = axises[0].twinx()
+    axis.set_ybound(lower=0)
+    #axis.set_ylim(bottom=0, top=max(yListInfo1.dataList))
+    #axises[1].set_ylim(bottom=0, top=max(yListInfo2.dataList))
+    
     for sq in range(2):
         if(yListInfo[sq].curveLegend != ''):
             axises[sq].plot(xlist, yListInfo[sq].dataList, colors[sq][0]+'-', linewidth=yListInfo[sq].lineWidth, label = yListInfo[sq].curveLegend)
