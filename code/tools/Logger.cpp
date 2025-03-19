@@ -1,5 +1,5 @@
 #include "Logger.h"
-#include "LogFile.h"
+
 
 #include <algorithm>
 #include <limits>
@@ -390,7 +390,7 @@ Logger::Logger(SourceFile file, int line)
 }
 
 Logger::Logger(SourceFile file, int line, const char* func, string logFileName)
-  : impl_(INFO, 0, file, line)
+  : impl_(DEBUG, 0, file, line)
 {
   assert(LogFileManager::existFile(logFileName));
   l_output = std::bind(&LogFile::append, LogFileManager::getLogFile(logFileName),

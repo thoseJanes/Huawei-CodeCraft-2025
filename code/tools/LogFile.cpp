@@ -1,4 +1,5 @@
 #include "LogFile.h"
+#include "LogFileManager.h"
 #include <assert.h>
 #include <stdio.h>
 #include <time.h>
@@ -61,21 +62,20 @@ size_t AppendFile::write(const char* logline, size_t len)
 }
 
 
-TimeRoller::TimeRoller(const string& basename,
+TimeRoller::TimeRoller(const string basename,
                 off_t rollSize,
-                int checkEveryN = 1024)
-                  : basename_(basename),
-                rollSize_(rollSize),
+                int checkEveryN)
+                  : rollSize_(rollSize),
                 checkEveryN_(checkEveryN),
                 count_(0),
                 startOfPeriod_(0),
-                lastRoll_(0)
+                lastRoll_(0), FileRoller(basename)
 {
-  assert(basename.find('/') == string::npos);
+  //assert(basename.find('/') == string::npos);可以设置输出目录的话，应该不用判断这个。
 }
 
 
-LogFile::LogFile(std::unique_ptr<FileRoller> roller, int flushInterval)
+LogFile::LogFile(std::unique_ptr<FileRoller>& roller, int flushInterval)
   : flushInterval_(flushInterval),
     lastFlush_(0)
 {
@@ -92,7 +92,7 @@ LogFile::~LogFile() = default;
 
 void LogFile::append(const char* logline, int len)
 {
-  file_->append(logline, len);
+    file_->append(logline, len);
 
   //roll
   time_t now = ::time(NULL);
@@ -165,6 +165,7 @@ string TimeRoller::generateFileName()
   return filename;
 }
 
-
+map<string, LogFile*> LogFileManager::fileNameToLogFile = {};
+string LogFileManager::logFilePath = ".";
 
 

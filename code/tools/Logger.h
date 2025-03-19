@@ -5,6 +5,7 @@
 #include <string>
 #include <stdio.h>
 #include <functional>  
+#include "LogFileManager.h"
 using namespace std;
 
 

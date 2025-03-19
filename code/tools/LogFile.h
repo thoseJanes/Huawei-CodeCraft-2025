@@ -44,26 +44,24 @@ class AppendFile : noncopyable
   off_t writtenBytes_;
 };
 
-class FileRoller : noncopyable{//从来不roll
+class FileRoller{
 public:
-  FileRoller(const string basename):basename_(basename){}
-  virtual bool judgeRoll(AppendFile* file_, time_t now){return false;}
-  virtual void freshRoll(){return;}
-  virtual string generateFileName(){return basename_;}
-private:
-  const string basename_;
+    FileRoller(const string basename):basename_(basename){}
+    virtual bool judgeRoll(AppendFile* file_, time_t now) { return false; }
+    virtual void freshRoll() { return; }
+    virtual string generateFileName() { return basename_; }
+    const string basename_;
 };
 
-class TimeRoller : FileRoller{
+class TimeRoller : public FileRoller{
 public:
-  TimeRoller(const string& basename,
+  TimeRoller(const string basename,
                 off_t rollSize,
                 int checkEveryN = 1024);
   bool judgeRoll(AppendFile* file_, time_t now) override;//注意！这里直接传入裸指针了。需要确保file_在judgeRoll时还存活。如果多线程情况应该用shared_ptr
   void freshRoll() override;
   string generateFileName() override;
 private:
-  const string basename_;
   time_t startOfPeriod_;
   time_t lastRoll_;
   time_t judgeTime_;//用来传递now
@@ -78,7 +76,7 @@ private:
 class LogFile : noncopyable
 {
  public:
-  LogFile(std::unique_ptr<FileRoller> roller, int flushInterval = 3);//在构造时传入，能否使得两者生命周期一样长？
+  LogFile(std::unique_ptr<FileRoller>& roller, int flushInterval = 3);//在构造时传入，能否使得两者生命周期一样长？
   ~LogFile();
 
   void append(const char* logline, int len);
@@ -92,35 +90,6 @@ class LogFile : noncopyable
   const int flushInterval_;
 };
 
-//用来管理各种文件的Log。
-class LogFileManager{
-public:
-  static void addLogFile(const string fileName){
-    if(!existFile(fileName)){
-      string filePath = logFilePath + "\\" + fileName;
-      fileNameToLogFile[fileName] = new LogFile(std::make_unique<FileRoller>(new FileRoller(filePath)));
-    }
-  };
-  static LogFile* getLogFile(const string fileName){
-    if(existFile(fileName)){
-      return fileNameToLogFile[fileName];
-    }
-    return nullptr;
-  }
-  static void setLogFilePath(const string path){logFilePath = path;}
-  static bool existFile(const string fileName){
-    return fileNameToLogFile.find(fileName)!=fileNameToLogFile.end();
-  };
-  static void flushAll(){
-    for(auto it=fileNameToLogFile.begin();it!=fileNameToLogFile.end();it++){
-      it->second->flush();
-    }
-  }
-private:
-  static map<string, LogFile*> fileNameToLogFile;
-  static string logFilePath;
-};
-map<string, LogFile*> LogFileManager::fileNameToLogFile = {};
-string LogFileManager::logFilePath = ".\\";
+
 
 #endif
