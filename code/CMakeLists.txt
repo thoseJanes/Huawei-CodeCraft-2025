@@ -17,3 +17,6 @@ add_executable(code_craft                   ${cur_src}) # ！！！不要修改 
 #if (NOT WIN32)
 #    target_link_libraries(code_craft  pthread  rt  m)
 #endif (NOT WIN32)
+# 指定静态库的路径
+set(LOGTOOL_PATH "${CMAKE_SOURCE_DIR}/tools/libLogTool.a")
+target_link_libraries(test PRIVATE ${LOGTOOL_PATH})
