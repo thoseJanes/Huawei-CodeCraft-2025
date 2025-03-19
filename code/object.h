@@ -44,7 +44,7 @@ public:
         this->size = size;
         this->tag = tag;
         this->unitReqNum = (int*)malloc((REP_NUM+1)*size*sizeof(int));//malloc分配0空间是合法操作。
-        for(int i=0;i<3;i++){
+        for(int i=0;i<REP_NUM;i++){
             this->unitOnDisk[i] = this->unitReqNum + (i+1)*size;
         }
     }

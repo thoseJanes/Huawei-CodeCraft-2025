@@ -17,8 +17,9 @@ private:
     friend class CircularSpacePiece;
 public:
     SpacePieceNode(int value, int length) : pos(value), len(length), next(nullptr) {}
-    const SpacePieceNode* getNext(){return const_cast<const SpacePieceNode*>(next);}
-    int getLen(){return len;}
+    const SpacePieceNode* getNext() const {return const_cast<const SpacePieceNode*>(next);}
+    int getLen() const {return len;}
+    int getStart() const {return pos;}
 };
 
 // store free space of disk.
@@ -212,7 +213,7 @@ public:
 };
 
 // store position of requested obj unit on disk
-// TO BE UPDATED: use red-black tree
+// TO BE UPDATED: use B+ tree
 // 问题在于，需要轮转。可以存储头结点的位置，然后通过
 class CircularSpaceUnit{
 public:

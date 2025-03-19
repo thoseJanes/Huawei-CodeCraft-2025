@@ -1,5 +1,6 @@
 #include <algorithm>
 #include <iostream>
+#include <memory>
 
 int main(){
 
@@ -9,6 +10,7 @@ int main(){
         unitOnDisk[i] = i;
     }
     std::sort<int*>(unitOnDisk, unitOnDisk+objSize);
+    memmove(unitOnDisk+1, unitOnDisk, 4*sizeof(int));
 
     for(int i=0;i<objSize;i++){
         printf("%d",unitOnDisk[i]);

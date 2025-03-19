@@ -12,6 +12,10 @@
 class Worker{//obj由它管理。
 public:
     Worker(){actionBuffer = (char*)malloc((G+10)*sizeof(char));memcpy(actionBuffer, '\0', (G+10)*sizeof(char));};
+    //初始化磁盘
+    void initDisk(){
+        diskManager.addDisk(V);
+    }
     //接收头部统计数据
     void swallowStatistics(){
         int StaNum = (T - 1) / FRE_PER_SLICING + 1;

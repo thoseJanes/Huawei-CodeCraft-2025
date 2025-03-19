@@ -57,11 +57,13 @@ private:
     //记录磁盘内各个tag占据的unit数量。
     int* tagUnitNum;//在assign这种存储对象粒度的方法中修改。而非store这种单元粒度的方法中。
     
-    void allocate(int objId, std::vector<int> units, int start, int len){
+    void allocate(int objId, int* unitOnDisk, std::vector<int>::iterator it, int start, int len){
         for(int i=0;i<len;i++){
             int pos = (start+len)%spaceSize;
             objIdSpace[pos] = objId;
-            untIdSpace[pos] = units[i];
+            untIdSpace[pos] = *it;
+            unitOnDisk[*it] = pos;
+            it++;
         }
         if(!freeSpace.testAlloc(start, len)){
             assert(false);
@@ -143,18 +145,38 @@ public:
     int excute(HeadAction action, int times);
     
     //urgent表明该对象写入时即需要读取。tag表明是否按tag尽量分在同一tag周围（或相关性较大tag周围）。
-    int assignSpace(int objSize ,UnitOrder order ,bool urgent, int tag = -1){
+    int assignSpace(Object& obj ,UnitOrder order ,int* unitOnDisk ,bool urgent, int tag = -1){
+        int objSize = obj.size;
         std::vector<int> units = formUnitsByOrder(objSize, order);////////////////////////
         const SpacePieceNode* node = freeSpace.getStartAfter(head.headPos, true);
+        auto tempNode = node;
+        if(node->getLen() < objSize){//找到一块合适大小的空间
+            tempNode = node->getNext();
+            while(tempNode != node && tempNode->getLen() < objSize){
+                tempNode = tempNode->getNext();
+            }
+        }
+
+        if(tempNode->getLen() >= objSize){//如果存在能完整放入该对象的空间
+            int start = node->getStart();
+            if(start==head.headPos){//即如果当前磁头位置处于空白区域的起始处，也即磁头位置没有存储内容。
+                int end = node->getLen()+start;
+                allocate(obj.objId, unitOnDisk, units.begin(), end-objSize, objSize);//放在这块空间的尾部
+            }else{
+                allocate(obj.objId, unitOnDisk, units.begin(), start, objSize);//放在这块空间的首部（与head靠近）
+            }
+        }else{//找不到一整块足够大小的空间。直接分散存储（效率会较低）。
+            //FIXME:应该记录最大空间大小！或者分级存储freeSpace。
+            int leftSize = objSize;
+            while(leftSize>0){
+                allocate(obj.objId, unitOnDisk, units.begin()+objSize-leftSize, tempNode->getStart(), std::min<int>(tempNode->getLen(), leftSize));
+                leftSize = leftSize - tempNode->getLen();
+            }
+        }
         //虽然头数据知道对象数量，但不知道对象大小。
         //可以规划分区。
         //可以通过小size对象来减小磁盘碎片。
         //在空的地方读会报错吗？
-
-
-
-
-
         this->tagUnitNum[tag] += objSize;
     }
     int releaseSpace(int* unitOnDisk, int objSize, int tag){
@@ -256,8 +278,20 @@ public:
             存储位置：同一对象分配的空间尽量连续（方便连读）。
             存储顺序：三个副本尽量采用不同的存储顺序。
         */
+        int* diskSort = (int*)malloc(sizeof(int)*diskGroup.size());
+        for(int i=0;i<diskGroup.size();i++){
+            diskSort[i] = i;
+        }
+        std::sort<int*>(diskSort, diskSort+diskGroup.size(), [=](int a, int b){
+            return (diskGroup[a]->getFreeSpaceSize()>diskGroup[b]->getFreeSpaceSize());
+        });
 
+        for(int i=0;i<REP_NUM;i++){
+            diskGroup[diskSort[i]]->assignSpace(obj, static_cast<UnitOrder>(i), obj.unitOnDisk[i], false, obj.tag);
+            obj.replica[i] = diskSort[i];
+        }//分配空间最大的磁盘。
 
+        free(diskSort);
         
     }
     std::array<std::vector<std::pair<HeadAction, int>>, 10> planHeadMove(std::vector<int>& doneReqIds){//输出10个磁盘的一个时间步的行动。
