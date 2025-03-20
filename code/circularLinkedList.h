@@ -1,6 +1,7 @@
 #if !defined(CIRCULARLIST_H)
 #define CIRCULARLIST_H
 #include <assert.h>
+#include "bplusTree.h"
 struct SpaceUnitNode{
     int pos;
     SpaceUnitNode* next;
@@ -215,18 +216,20 @@ public:
 // store position of requested obj unit on disk
 // TO BE UPDATED: use B+ tree
 // 问题在于，需要轮转。可以存储头结点的位置，然后通过
-class CircularSpaceUnit{
+class CircularSpaceUnit:public BplusTree<6>{
 public:
     typedef SpaceUnitNode Node;
     //需要包含磁头节点？如何把头节点和需要获取的节点区分开来？或者不包含，直接从外部获取,并且使用外部传参来轮转。
-    Node* head;
-    CircularSpaceUnit():head(nullptr){};
+    CircularSpaceUnit():BplusTree(){};
     
     void addReqUnit(int unitPos){
-
+        this->insert(unitPos);
     }
     void rmReqUnit(int unitPos){
-
+        this->remove(unitPos);
+    }
+    void roundToHead(int headPos){
+        
     }
 
 };
