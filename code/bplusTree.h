@@ -50,6 +50,13 @@ public:
         }
         return false;
     }
+    bool isFull() {
+        if (this->keyNum >= SIZE) {
+            LOG_BplusTree << "keyNum out of range!";
+            return true;
+        }
+        return false;
+    }
 };
 
 template<int SIZE>
@@ -99,6 +106,19 @@ public:
         LOG_BplusTree << "error: key out of range!";
         std::exit(0);
     }
+    bool addKeyAndChildByPos(int pos, int key, BplusNode<SIZE>* child) {
+        if (key == this->keys[pos]) {
+            LOG_BplusTree << "fail: duplicate key!";
+            return false;
+        }
+        memmove(this->keys + pos + 1, this->keys + pos, (this->keyNum - pos) * sizeof(int));
+        memmove(children + pos + 1, children + pos, (this->keyNum - pos) * sizeof(BplusNode<SIZE>*));
+        this->keys[pos] = key;
+        //children[i] = oldchild;//i处原本就是oldchild
+        children[pos] = child;
+        this->keyNum += 1;
+        return true;
+    }
     bool deleteKeyByPos(int pos, bool delChild = false) {//删除时应当会借位。
         if (this->parent&&this->keyNum <= (SIZE + 1) / 2) {
             LOG_FILE("BplusTree") << "keyNum less than  (SIZE+1)/2+1!";
@@ -116,9 +136,7 @@ public:
         this->keyNum -= 1;
         return true;
     }
-
-
-    BplusInnerNode<SIZE>* splitNode(int key, BplusNode<SIZE>* oldchild, BplusNode<SIZE>* newchild) {
+    BplusInnerNode<SIZE>* splitNode(int pos, int key, BplusNode<SIZE>* oldchild, int posInParent) {
         if (this->keyNum != SIZE) {
             LOG_BplusTree << "key number less than SIZE";
         }
@@ -127,25 +145,6 @@ public:
         BplusInnerNode<SIZE>* newNode = new BplusInnerNode<SIZE>();
         //需要快点为其分配parent，防止和root混淆。deleteKeyByPos中会根据有没有parent判断节点数是否能降低到0
         newNode->parent = this->parent;
-        //找到key的位置
-        int pos = 0;
-        while (pos < this->keyNum) {
-            if (key > this->keys[pos]) {
-                pos++;
-            }
-            else if (key == this->keys[pos]) {
-                LOG_BplusTree << "duplicate key!";
-                std::exit(0);
-            }
-            else {
-                break;
-            }
-        }
-        if (pos == this->keyNum) {
-            LOG_BplusTree << "error: newKey should be less than key of newchild!";
-            std::exit(0);
-        }
-        children[pos] = newchild;
         //分给旧节点SIZE/2+1个，分给新节点(SIZE+1)/2个。
         int oldNum = SIZE / 2 + 1; int newNum = (SIZE + 1) / 2;
         if (pos < oldNum) {
@@ -160,11 +159,11 @@ public:
         else {
             memcpy(newNode->keys, this->keys + oldNum, sizeof(int) * (pos - oldNum));
             newNode->keys[pos - oldNum] = key;
-            memcpy(newNode->keys + oldNum - pos + 1, this->keys + pos, sizeof(int) * (newNum + oldNum - pos - 1));
+            memcpy(newNode->keys + pos - oldNum + 1, this->keys + pos, sizeof(int) * (newNum + pos - oldNum - 1));
 
             memcpy(newNode->children, children + oldNum, sizeof(BplusNode<SIZE>*) * (pos - oldNum));
             newNode->children[pos - oldNum] = oldchild;
-            memcpy(newNode->children + oldNum - pos + 1, children + pos, sizeof(BplusNode<SIZE>*) * (newNum + oldNum - pos - 1));
+            memcpy(newNode->children + pos - oldNum + 1, children + pos, sizeof(BplusNode<SIZE>*) * (newNum + pos - oldNum - 1));
         }
         this->keyNum = oldNum;
         newNode->keyNum = newNum;
@@ -172,9 +171,12 @@ public:
         for (int i = 0; i < newNode->keyNum; i++) {
             newNode->children[i]->parent = newNode;
         }
+        if (this->parent!=nullptr) {
+            this->parent->children[posInParent] = newNode;
+        }
         LOG_BplusTreeInfo << "split inner node: " << *this
             << ", " << *newNode;
-        return newNode;
+        return this;
     }
     //会把一切都搞定。或者什么都不做。
     bool lendKey(int posInParent, int delPos, bool delChild = true) {
@@ -269,7 +271,7 @@ public:
     BplusLeafNode() :BplusNode<SIZE>::BplusNode(true) {}
     BplusLeafNode(int key) :BplusNode<SIZE>::BplusNode(key, true) {}
     BplusLeafNode<SIZE>* next = nullptr;
-    BplusLeafNode<SIZE>* splitNode(int key) {
+    BplusLeafNode<SIZE>* splitNode(int key, int posInParent) {
         if (this->keyNum != SIZE) {
             LOG_BplusTree << "key number less than SIZE";
         }
@@ -301,17 +303,20 @@ public:
         else {
             memcpy(newNode->keys, this->keys + oldNum, sizeof(int) * (pos - oldNum));
             newNode->keys[pos - oldNum] = key;
-            memcpy(newNode->keys + oldNum - pos + 1, this->keys + pos, sizeof(int) * (newNum + oldNum - pos - 1));
+            memcpy(newNode->keys + pos - oldNum + 1, this->keys + pos, sizeof(int) * (newNum + pos - oldNum - 1));
         }
         this->keyNum = oldNum;
         newNode->keyNum = newNum;
 
         newNode->next = this->next;
         this->next = newNode;
+
         newNode->parent = this->parent;
+        this->parent->children[posInParent] = newNode;//占据原先该节点在parent中的位置。
+        
         LOG_BplusTreeInfo << "split node: " << *this
             << ", " << *newNode;
-        return newNode;
+        return this;
 
     }
     bool deleteKeyByPos(int pos) {//删除时应当会借位。
@@ -327,17 +332,18 @@ public:
         this->keyNum -= 1;
         return true;
     }
+    //如果有重复的键，则失败。
     bool addKey(int key) {
-        if (this->keyNum >= SIZE) {
-            LOG_BplusTree << "keyNum out of range!";
-            return false;
-        }
         for (int i = 0; i < this->keyNum; i++) {
             if (key < this->keys[i]) {
                 memmove(this->keys + i + 1, this->keys + i, (this->keyNum - i) * sizeof(int));
                 this->keys[i] = key;
                 this->keyNum += 1;
                 return true;
+            }
+            else if (key == this->keys[i]) {
+                LOG_BplusTree << "fail: key " << key << " is already in the tree";
+                return false;
             }
         }
         this->keys[this->keyNum] = key;
@@ -410,7 +416,6 @@ public:
             return -1;
         }
     }
-    
 };
 
 template<int SIZE>
@@ -437,48 +442,50 @@ public:
         else {
             //找到叶子节点
             Node* node = root;
-            int pos;
+            std::stack<int> parentPos = {};
             while (!node->isLeaf) {
-                pos = node->searchKey(key);
-                if (node->keys[pos] == key) {
+                parentPos.push(node->searchKey(key));
+                if (node->keys[parentPos.top()] == key) {
                     LOG_BplusTree << "fail: key " << key << " already in tree!";
                     return;
                 }
-                if (pos == node->keyNum) {//如果pos比当前最大的还要大。
+                if (parentPos.top() == node->keyNum) {//如果pos比当前最大的还要大。
                     node->setMaxKey(key);
-                    pos -= 1;
+                    parentPos.top() -= 1;
                 }
-                node = static_cast<InnerNode*>(node)->children[pos];
+                node = static_cast<InnerNode*>(node)->children[parentPos.top()];
             }
             //给叶子节点插入key
-            auto leafNode = static_cast<LeafNode*>(node);
-            if (!leafNode->addKey(key)) {//键已满
-                auto newLeafNode = leafNode->splitNode(key);
+            LeafNode* leafNode = static_cast<LeafNode*>(node);
+            if (leafNode->isFull()) {//键已满
+                auto leftLeafNode = leafNode->splitNode(key, parentPos.top());
                 int newKey = leafNode->getMaxKey();
-                InnerNode* parentNode = leafNode->parent;
-                if (!parentNode->addKeyAndChild(newKey, leafNode, newLeafNode)) {
-                    splitInnerNode(newKey, node->parent, leafNode, newLeafNode);
-                }
+                splitInnerNode(newKey, leafNode->parent, leftLeafNode, parentPos);
+            }else{
+                if (!leafNode->addKey(key)) {
+                    return;
+                }   
             }
         }
     }
-    void splitInnerNode(int key, InnerNode* node, Node* oldchildNode, Node* newchildNode) {
-        auto newNode = node->splitNode(key, oldchildNode, newchildNode);
-        int newKey = node->getMaxKey();
-        if (node == root) {//增高，如果根节点的节点数量超出最大节点限制，则把根节点分裂为三个节点，
-            root = new InnerNode();
-            root->parent = nullptr;
-            node->parent = root;
-            newNode->parent = root;
-            root->keyNum = 2;
-            root->keys[0] = newKey;
-            root->keys[1] = newNode->getMaxKey();
-            root->children[0] = node;
-            root->children[1] = newNode;
-            return;
+    void splitInnerNode(int key, InnerNode* node, Node* childNode, std::stack<int> parentPos) {
+        if (node->isFull()) {
+            int keyPos = parentPos.top(); parentPos.pop();
+            if (node == root) {//增高，如果根节点的节点数量超出最大节点限制，则把根节点分裂为三个节点，
+                root = new InnerNode();
+                root->parent = nullptr;
+                node->parent = root;
+                root->keyNum = 1;
+                root->keys[0] = node->getMaxKey();
+                root->children[0] = node;
+                parentPos.push(0);
+            }
+            auto leftNode = node->splitNode(keyPos, key, childNode, parentPos.top());
+            int newKey = node->getMaxKey();
+            splitInnerNode(newKey, node->parent, leftNode, parentPos);
         }
-        if (!node->parent->addKeyAndChild(newKey, node, newNode)) {
-            splitInnerNode(newKey, node->parent, node, newNode);
+        else {
+            node->addKeyAndChildByPos(parentPos.top(), key, childNode);
         }
     }
 
@@ -547,7 +554,29 @@ public:
         }
     }
 
-
+    //寻找键值的最大值大于等于key的节点。
+    LeafNode* findNotBefore(int key) {
+        if (root->keyNum == 0) {
+            return nullptr;
+        }
+        else {
+            //找到叶子节点
+            Node* node = root;
+            int pos;
+            while (!node->isLeaf) {
+                pos = node->searchKey(key);
+                if (pos == node->keyNum) {//如果pos比当前最大的还要大。
+                    while (!node->isLeaf) {
+                        //直接搜索当前节点的最大值节点。
+                        node = static_cast<InnerNode*>(node)->children[node->keyNum - 1];
+                    }
+                    return static_cast<LeafNode*>(node)->next;//返回最大节点的后一个节点。这个节点刚好在key的右边。
+                }
+                node = static_cast<InnerNode*>(node)->children[pos];
+            }
+            return static_cast<LeafNode*>(node);
+        }
+    }
 };
 
 template<int SIZE>
