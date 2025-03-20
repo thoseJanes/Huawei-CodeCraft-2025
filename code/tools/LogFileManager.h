@@ -35,6 +35,9 @@ public:
             it->second->flush();
         }
     }
+    ~LogFileManager() {
+        this->flushAll();
+    }
 private:
     static map<string, LogFile*> fileNameToLogFile;
     static string logFilePath;

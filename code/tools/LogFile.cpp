@@ -146,6 +146,7 @@ bool TimeRoller::judgeRoll(AppendFile* file_, time_t now){
       }
     }
   }
+  return false;
 }
 
 string TimeRoller::generateFileName()

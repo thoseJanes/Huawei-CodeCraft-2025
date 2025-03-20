@@ -238,7 +238,8 @@ inline void LogBuffer<SIZE>::testAppend(double v, int reserveSpace){
     }
 }
 
-
+template class LogBuffer<kSmallBuffer>;
+template class LogBuffer<kLargeBuffer>;
 
 void LogStream::staticCheck()
 {

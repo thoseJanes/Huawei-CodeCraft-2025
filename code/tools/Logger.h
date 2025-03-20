@@ -256,7 +256,7 @@ inline Logger::LogLevel Logger::logLevel()
 #define LOG_SYSERR Logger(__FILE__, __LINE__, false).stream()
 #define LOG_SYSFATAL Logger(__FILE__, __LINE__, true).stream()
 
-#define LOG_FILE(x) if (Logger::logLevel() <= Logger::DEBUG && LogFileManager::existFile(x)) \
+#define LOG_FILE(x) if (LogFileManager::existFile(x)) \
   Logger(__FILE__, __LINE__, __func__, x).stream()
 
 
