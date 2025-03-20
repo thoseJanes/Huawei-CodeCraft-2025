@@ -5,6 +5,7 @@
 #include <cstring>
 #include <list>
 #include <unordered_map>
+#include <unordered_set>
 #include <vector>
 
 #include "config.h"
@@ -27,7 +28,7 @@ int timestamp = -1;
 void delete_action()
 {
     int n_delete;
-    int abort_num = 0;
+
     // 读取删除文件id
     scanf("%d", &n_delete);
     static int _id[MAX_OBJECT_NUM];
@@ -39,15 +40,15 @@ void delete_action()
     int accum_abort = 0;
     // 回溯删除文件的读请求
     for (int i = 1; i <= n_delete; i++) {
-        int id = _id[i];
-        int current_id = object[id].last_request_point;
+        int id = _id[i];//删除的文件id
+
         std::vector<int> curNotDoneRequest;
-        while (current_id != 0) {
-            if (request[current_id].is_done == false) {
-                curNotDoneRequest.push_back(current_id);
+        for(auto it = object[id].request_list.begin(); it != object[id].request_list.end(); it++){
+            if(request[*it].is_done == false){
+                curNotDoneRequest.push_back(*it);
             }
-            current_id = request[current_id].prev_id;
         }
+
         notDoneRequest.push_back(curNotDoneRequest);
         accum_abort += curNotDoneRequest.size();
     }
@@ -68,6 +69,7 @@ void delete_action()
             disk[object[id].replica[j]].do_object_delete(object[id].unit[j]);
         }
         object[id].is_delete = true;
+        object[id].request_list.clear();
     }
 
     fflush(stdout);
@@ -82,7 +84,6 @@ void write_action()
     for (int i = 1; i <= n_write; i++) {
         int id, size;
         scanf("%d%d%*d", &id, &size);
-        object[id].last_request_point = 0;
         object[id].size = size;
         object[id].is_delete = false;
 
@@ -120,19 +121,19 @@ void read_action()
 {
     int n_read;
     int request_id, object_id;
+    // 读取请求
     scanf("%d", &n_read);
     for (int i = 1; i <= n_read; i++) {
         scanf("%d%d", &request_id, &object_id);
         request[request_id].object_id = object_id;
-        request_list.push_front(request_id);
-        //当前请求对象的上一个请求，用作链表方便删除搜索，头插法
-        request[request_id].prev_id = object[object_id].last_request_point;
-        object[object_id].last_request_point = request_id;
+        request_list.push_front(request_id); //记录全局请求队列
+        //记录当前文件的最新请求
+        object[object_id].request_list.push_front(request_id);
         request[request_id].is_done = false;
         request[request_id].start_time = timestamp;
     }
 
-
+    std::unordered_set<int> done_request;
 
     for (int i = 1; i <= N; i++) {
         //遍历硬盘
@@ -172,33 +173,24 @@ void read_action()
             continue;
         }
 
-        disk[i].processRequest(request[disk[i].reqID], object[request[disk[i].reqID].object_id]);
+        disk[i].processRequest(request[disk[i].reqID], object[request[disk[i].reqID].object_id],done_request);
 
     }
 
     // 结算
-    std::vector<int> done_request;
-    for(int i = 1; i <= N; i++){
-        if(disk[i].reqID!=-1 && request[disk[i].reqID].is_done){
-            if(object[request[disk[i].reqID].object_id].is_delete){//文件已经被删除了{
-                disk[i].reqID = -1;
-            }
-            else{
-                done_request.push_back(disk[i].reqID);
-                disk[i].reqID = -1;
-            }
-        }
-    }
+
+
+    
 
     // 输出
     if (done_request.size() > 0) {
         printf("%d\n", done_request.size());
-        for (int i = 0; i < done_request.size(); i++) {
-            printf("%d\n", done_request[i]);
+        for (auto it = done_request.begin(); it != done_request.end(); it++) {
+            printf("%d\n", *it);
             //删除已经完成的请求
-            if(request_map.find(done_request[i]) != request_map.end()){
-                request_list.erase(request_map[done_request[i]]); //其实已经在分配的时候删除了
-                request_map.erase(done_request[i]);
+            if(request_map.find( *it) != request_map.end()){
+                request_list.erase(request_map[ *it]); //其实已经在分配的时候删除了
+                request_map.erase( *it);
             }
         }
     } else {
@@ -242,7 +234,7 @@ int main()
     fflush(stdout);
 
     //初始化磁盘
-    disk = std::vector<Disk>(N+1, Disk(V, G));
+    disk = std::vector<Disk>(N+1, Disk(V, G, request, object));
 
     for (int t = 1; t <= T + EXTRA_TIME; t++) {
         freshAll();
