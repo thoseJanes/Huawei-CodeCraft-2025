@@ -32,11 +32,12 @@ public:
         int objsize = object_unit.size() - 1;
         //遍历找空位塞入， 从pos开始找
         for (int i = 1; i < unit.size(); i++) {
-            int shift_pos = (pos + i - 1) % V + 1;
-            if (unit[i] == 0) {
-                unit[i] = object_id;
-                object_unit[++current_write_point] = i;
-                obj_pos[i] = current_write_point; //记录位置
+            int shift_pos = (pos + i - 1 + maxG/16) % V + 1;
+
+            if (unit[shift_pos] == 0) {
+                unit[shift_pos] = object_id;
+                object_unit[++current_write_point] = shift_pos;
+                obj_pos[shift_pos] = current_write_point; //记录位置
                 if (current_write_point == objsize) {
                     break;
                 }
