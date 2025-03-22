@@ -11,6 +11,7 @@
 
 class Worker{//obj由它管理。
 public:
+<<<<<<< HEAD
     Worker(){
         actionBuffer = (char*)malloc((G+10)*sizeof(char));
         memset(actionBuffer, '\0', (G+10)*sizeof(char));
@@ -20,6 +21,12 @@ public:
         for(int i=0;i<N;i++){
             diskManager.addDisk(V);
         }
+=======
+    Worker(){actionBuffer = (char*)malloc((G+10)*sizeof(char));memcpy(actionBuffer, '\0', (G+10)*sizeof(char));};
+    //初始化磁盘
+    void initDisk(){
+        diskManager.addDisk(V);
+>>>>>>> 7bf56431a960a1eda458cf7ea0726e2f1630f06b
     }
     //接收头部统计数据
     void swallowStatistics(){
@@ -61,8 +68,13 @@ public:
                 }
             }
             //更新obj内部的Request和单元请求数，更新disk内的请求单元链表。
+<<<<<<< HEAD
             auto overtimeReqUnitsOrder = obj->dropRequest(overtimeReqTop);
             diskManager.freshOvertimeReqUnits(*obj, overtimeReqUnitsOrder);
+=======
+            auto overtimeReqUnits = obj->dropRequest(overtimeReqTop);
+            diskManager.freshOvertimeReqUnits(*obj, overtimeReqUnits);
+>>>>>>> 7bf56431a960a1eda458cf7ea0726e2f1630f06b
 
             overtimeReqTop += 1;//静态变量加一，循环停止时，当前req即有效。
         }
@@ -131,6 +143,7 @@ public:
         fflush(stdout);
     }
 
+<<<<<<< HEAD
     void actionsToChars(char* actionBuffer, std::vector<HeadOperator> headOperation){
         int bufCur = 0;
         if(headOperation.size()>0 && headOperation[0].action==JUMP){//如果是跳操作。
@@ -154,6 +167,8 @@ public:
         }
     }
 
+=======
+>>>>>>> 7bf56431a960a1eda458cf7ea0726e2f1630f06b
     void processRead(){
         //接收数据并创建对象
         int n_read;
@@ -169,6 +184,7 @@ public:
         }
         
         //规划读取过程。
+<<<<<<< HEAD
         diskManager.planUnitsRead();
         
         //输出读取过程。
@@ -183,15 +199,56 @@ public:
         printf("%d\n", doneReqIds.size());
         for(int i=0;i<doneReqIds.size();i++){
             printf("%d\n", doneReqIds[i]);
+=======
+        std::vector<int> doneReqId = {};
+        auto headOperations = diskManager.planHeadMove(doneReqId);
+        
+        //输出读取过程。
+        for(int i=0;i<N;i++){//不同磁盘
+            auto headOperation = headOperations[i];
+            int bufCur = 0;
+            if(headOperation.size()>0 && headOperation[0].first==JUMP){//如果是跳操作。
+                bufCur += snprintf(actionBuffer, G+10, "j %d", headOperation[0].second+1);//注意内部表示与外部值的转换。+1
+            }else{//如果是读或走操作
+                for(int j=0;j<headOperation.size();j++){//多个操作遍历
+                    auto operate = headOperation[j];
+                    if(operate.first == PASS){
+                        for(int k=0;k<operate.second;k++){
+                            actionBuffer[bufCur] = 'p';
+                        }
+                        bufCur += operate.second;
+                    }else if(operate.first == READ){
+                        for(int k=0;k<operate.second;k++){
+                            actionBuffer[bufCur] = 'r';
+                        }
+                    }
+                }
+                actionBuffer[bufCur++] = '#';
+                actionBuffer[bufCur] = '\0';//在末尾添加字符。
+            }
+            printf("%s\n", actionBuffer);
+        }
+        //输出完成的请求。
+        printf("%d\n", doneReqId.size());
+        for(int i=0;i<doneReqId.size();i++){
+            printf("%d\n", doneReqId[i]);
+>>>>>>> 7bf56431a960a1eda458cf7ea0726e2f1630f06b
         }
     
         fflush(stdout);
     }
 
+<<<<<<< HEAD
     void checkDisk(Disk disk);//更新disk的信息
     ~Worker(){
         free(actionBuffer);
     }
+=======
+
+
+
+    void checkDisk(Disk disk);//更新disk的信息
+>>>>>>> 7bf56431a960a1eda458cf7ea0726e2f1630f06b
 private:
     DiskManager diskManager;
     char* actionBuffer;

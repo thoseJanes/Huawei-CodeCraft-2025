@@ -1,5 +1,8 @@
 .vscode/
+<<<<<<< HEAD
 code/build/
+=======
+>>>>>>> 7bf56431a960a1eda458cf7ea0726e2f1630f06b
 demos/
 replay/
 code_craft_2025/

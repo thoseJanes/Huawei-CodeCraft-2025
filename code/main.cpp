@@ -16,7 +16,10 @@ int main()
 
     Worker worker;
     worker.swallowStatistics();
+<<<<<<< HEAD
     worker.initDisk();
+=======
+>>>>>>> 7bf56431a960a1eda458cf7ea0726e2f1630f06b
     start();
 
     for (int t = 1; t <= T + EXTRA_TIME; t++) {

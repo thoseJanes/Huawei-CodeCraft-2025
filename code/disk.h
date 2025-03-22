@@ -5,7 +5,10 @@
 #include <algorithm>
 #include <vector>
 #include <array>
+<<<<<<< HEAD
 #include <cmath>
+=======
+>>>>>>> 7bf56431a960a1eda458cf7ea0726e2f1630f06b
 
 #include "noncopyable.h"
 #include "bufferSpace.h"
@@ -13,14 +16,23 @@
 
 #include "global.h"
 #include "object.h"
+<<<<<<< HEAD
 #include "bplusTree.h"
 enum HeadAction{
     NONE,
+=======
+
+
+
+
+enum HeadAction{
+>>>>>>> 7bf56431a960a1eda458cf7ea0726e2f1630f06b
     JUMP,
     PASS,
     READ
 };
 
+<<<<<<< HEAD
 struct HeadOperator{
     HeadAction action;
     union{
@@ -28,6 +40,8 @@ struct HeadOperator{
         int jumpTo;
     };
 };
+=======
+>>>>>>> 7bf56431a960a1eda458cf7ea0726e2f1630f06b
 
 enum UnitOrder{
     SEQUENCE,//顺序，01234
@@ -36,6 +50,7 @@ enum UnitOrder{
 };
 
 #define INTERVAL 7
+<<<<<<< HEAD
 #define LOG_DISK LOG_FILE("disk")
 
 class DiskHead{
@@ -194,6 +209,29 @@ private:
     //也可以用两个space，一个存char，一个存int。
     CircularSpacePiece freeSpace;
     Dim1Space<DiskUnit> diskSpace;
+=======
+
+class DiskHead{
+public:
+    int headPos;
+    HeadAction lastStatus;
+    int readConsume = FIRST_READ_CONSUME;
+    int presentTokens = G;
+};
+//磁头移动后需要更新以下两个链表
+//1.存储空闲空间(位置/大小)的单向循环链表。从磁头处开始分配空间。包含磁头。第一个插入的元素是磁头。
+//2.存储请求块(位置)的单向循环链表。从磁头处开始处理请求。包含磁头。
+class Disk:noncopyable{
+private:
+    int spaceSize;
+    //不仅存储对象id(int)，还存储unit值（char*),字节对齐会增加额外空间。
+    //也可以用两个space，一个存char，一个存int。
+    DiskHead head;
+    CircularSpacePiece freeSpace;
+    CircularSpaceUnit reqSpace;
+    Dim1Space<int> objIdSpace;
+    Dim1Space<char> untIdSpace;
+>>>>>>> 7bf56431a960a1eda458cf7ea0726e2f1630f06b
 
     int bestHeadPos;
 
@@ -203,10 +241,15 @@ private:
     void allocate(int objId, int* unitOnDisk, std::vector<int>::iterator it, int start, int len){
         for(int i=0;i<len;i++){
             int pos = (start+len)%spaceSize;
+<<<<<<< HEAD
             diskSpace[pos].objId = objId;
             diskSpace[pos].untId = *it;
             // objIdSpace[pos] = objId;
             // untIdSpace[pos] = *it;
+=======
+            objIdSpace[pos] = objId;
+            untIdSpace[pos] = *it;
+>>>>>>> 7bf56431a960a1eda458cf7ea0726e2f1630f06b
             unitOnDisk[*it] = pos;
             it++;
         }
@@ -257,6 +300,7 @@ private:
         }
         return out;
     }
+<<<<<<< HEAD
 public:
     const int diskId;
     const int spaceSize;
@@ -266,15 +310,28 @@ public:
         :freeSpace(spacesize), diskId(id), head(spacesize), spaceSize(spacesize){
         this->head.headPos = headPos;
         diskSpace.initSpace(spacesize);
+=======
+    
+public:
+    Disk(int spacesize, int headPos = 0):freeSpace(spacesize){
+        this->spaceSize = spacesize;
+        this->head.headPos = headPos;
+        objIdSpace.initSpace(spacesize);
+        untIdSpace.initSpace(spacesize);
+>>>>>>> 7bf56431a960a1eda458cf7ea0726e2f1630f06b
 
         tagUnitNum = (int*)malloc(sizeof(int)*M);
         memcpy(tagUnitNum, 0, sizeof(int)*M);//初始化。
     }
     
+<<<<<<< HEAD
     /// @brief 通过存储单元位置返回存储单元信息
     /// @param unitPos 存储单元的位置
     /// @return 返回存储单元的信息，包括存储单元所属的对象Id及其在对象中的位置Id
     DiskUnit getUnitInfo(int unitPos){return diskSpace[unitPos];}
+=======
+    void freshTokens(){this->head.presentTokens = G;}
+>>>>>>> 7bf56431a960a1eda458cf7ea0726e2f1630f06b
     // //可以尝试建表规划？
     // int testConsume(HeadAction action, int times){
     //     //返回操作消耗的令牌数,只是测试时间花费，不会改变状态。
@@ -292,6 +349,7 @@ public:
     //         return G;
     //     }
     // }
+<<<<<<< HEAD
     
     //返回从from位置移动到target需要经过的单元距离。
     int getDistance(int target, int from){
@@ -301,6 +359,12 @@ public:
     //freeSpace相关
     //urgent表明该对象写入时即需要读取。tag表明是否按tag尽量分在同一tag周围（或相关性较大tag周围）。
     void assignSpace(Object& obj ,UnitOrder order ,int* unitOnDisk ,bool urgent, int tag = -1){
+=======
+    int excute(HeadAction action, int times);
+    
+    //urgent表明该对象写入时即需要读取。tag表明是否按tag尽量分在同一tag周围（或相关性较大tag周围）。
+    int assignSpace(Object& obj ,UnitOrder order ,int* unitOnDisk ,bool urgent, int tag = -1){
+>>>>>>> 7bf56431a960a1eda458cf7ea0726e2f1630f06b
         int objSize = obj.size;
         std::vector<int> units = formUnitsByOrder(objSize, order);////////////////////////
         const SpacePieceNode* node = freeSpace.getStartAfter(head.headPos, true);
@@ -334,10 +398,25 @@ public:
         //在空的地方读会报错吗？
         this->tagUnitNum[tag] += objSize;
     }
+<<<<<<< HEAD
     void releaseSpace(int* unitOnDisk, int objSize, int tag){
         this->dealloc(unitOnDisk, objSize);
         this->tagUnitNum[tag] -= objSize;
     }
+=======
+    int releaseSpace(int* unitOnDisk, int objSize, int tag){
+        this->dealloc(unitOnDisk, objSize);
+        this->tagUnitNum[tag] -= objSize;
+    }
+    
+    int addReqUnit(int unit){
+        reqSpace.addReqUnit(unit);
+    }
+    int rmReqUnit(int unit){
+        reqSpace.rmReqUnit(unit);
+    }
+    
+>>>>>>> 7bf56431a960a1eda458cf7ea0726e2f1630f06b
 
     int getFreeSpaceSize(){return freeSpace.getTolSpace();}
     int getBestHeadPos(int timeStamp){
@@ -385,6 +464,7 @@ public:
     */
 };
 
+<<<<<<< HEAD
 class HeadActionsInfo{
 public:
     int spaceSize = 1;
@@ -563,11 +643,21 @@ public:
     };
     std::vector<DiskInfo*> diskGroup;
     std::vector<int> doneRequestIds;
+=======
+class DiskManager{
+public:
+    std::vector<Disk*> diskGroup;
+>>>>>>> 7bf56431a960a1eda458cf7ea0726e2f1630f06b
 public:
     //存储一个活动对象的id索引。方便跟进需要查找的单元信息。
     DiskManager(){};
     void addDisk(int spaceSize){
+<<<<<<< HEAD
         diskGroup.push_back(new DiskInfo{new Disk(diskGroup.size(), spaceSize)});
+=======
+        auto diskptr = new Disk(spaceSize);
+        diskGroup.push_back(diskptr);
+>>>>>>> 7bf56431a960a1eda458cf7ea0726e2f1630f06b
     }
     ~DiskManager(){
         for(int i=0;i<diskGroup.size();i++){
@@ -579,11 +669,16 @@ public:
             if(obj.unitReqNum[u]==1){//说明是新增的(从0到1)unit需求
                 for(int i=0;i<REP_NUM;i++){
                     int diskId = obj.replica[i];
+<<<<<<< HEAD
                     diskGroup[diskId]->reqSpace.insert(obj.unitOnDisk[i][u]);
+=======
+                    diskGroup[diskId]->addReqUnit(obj.unitOnDisk[i][u]);
+>>>>>>> 7bf56431a960a1eda458cf7ea0726e2f1630f06b
                 }
             }
         }
     }
+<<<<<<< HEAD
     void freshOvertimeReqUnits(const Object& obj, std::vector<int> unitsOrder){
         for(int r=0;r<REP_NUM;r++){//第几个副本
             DiskInfo* disk = this->diskGroup[obj.replica[r]];
@@ -593,6 +688,17 @@ public:
         }
     }
 
+=======
+    void freshOvertimeReqUnits(const Object& obj, std::vector<int> unitPos){
+        for(int r=0;r<REP_NUM;r++){//第几个副本
+            Disk* disk = this->diskGroup[obj.replica[r]];
+            for(int i=0;i<unitPos.size();i++){
+                disk->rmReqUnit(obj.unitOnDisk[r][i]);
+            }
+        }
+    }
+    
+>>>>>>> 7bf56431a960a1eda458cf7ea0726e2f1630f06b
     void assignSpace(Object& obj){
         //首先挑出3块空间够且负载低的磁盘，然后选择存储位置，然后选择存储顺序。原则如下：
         /*
@@ -604,17 +710,26 @@ public:
             diskSort[i] = i;
         }
         std::sort<int*>(diskSort, diskSort+diskGroup.size(), [=](int a, int b){
+<<<<<<< HEAD
             return (diskGroup[a]->disk->getFreeSpaceSize() > diskGroup[b]->disk->getFreeSpaceSize());
         });
 
         for(int i=0;i<REP_NUM;i++){
             diskGroup[diskSort[i]]->disk->assignSpace(obj, static_cast<UnitOrder>(i), obj.unitOnDisk[i], false, obj.tag);
+=======
+            return (diskGroup[a]->getFreeSpaceSize()>diskGroup[b]->getFreeSpaceSize());
+        });
+
+        for(int i=0;i<REP_NUM;i++){
+            diskGroup[diskSort[i]]->assignSpace(obj, static_cast<UnitOrder>(i), obj.unitOnDisk[i], false, obj.tag);
+>>>>>>> 7bf56431a960a1eda458cf7ea0726e2f1630f06b
             obj.replica[i] = diskSort[i];
         }//分配空间最大的磁盘。
 
         free(diskSort);
         
     }
+<<<<<<< HEAD
 
     /// @brief chose a disk to read unit reqUnit
     /// @param reqUnit unit position in disk
@@ -751,13 +866,30 @@ public:
         for(int i=0;i<REP_NUM;i++){
             int diskId = obj.replica[i];
             Disk* disk = diskGroup[diskId]->disk;
+=======
+    std::array<std::vector<std::pair<HeadAction, int>>, 10> planHeadMove(std::vector<int>& doneReqIds){//输出10个磁盘的一个时间步的行动。
+        //plan
+
+
+        //doneRequests = obj.commitUnit()，得到已完成的请求id。
+
+    }
+    void freeSpace(Object& obj){
+        for(int i=0;i<REP_NUM;i++){
+            int diskId = obj.replica[i];
+            Disk* disk = diskGroup[diskId];
+>>>>>>> 7bf56431a960a1eda458cf7ea0726e2f1630f06b
             disk->releaseSpace(obj.unitOnDisk[i], obj.size, obj.tag);
         }
     }
     
     void freshTokens(){
         for(int i=0;i<diskGroup.size();i++){
+<<<<<<< HEAD
             diskGroup[i]->disk->head.freshTokens();
+=======
+            diskGroup[i]->freshTokens();
+>>>>>>> 7bf56431a960a1eda458cf7ea0726e2f1630f06b
         }
     }
 

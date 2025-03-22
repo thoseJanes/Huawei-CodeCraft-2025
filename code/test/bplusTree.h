@@ -5,14 +5,8 @@
 #include <cstdlib>
 #include <assert.h>
 #include <stack>
-<<<<<<< HEAD
-#include <exception>
-//#include "tools/LogT"
-#include "./tools/Logger.h"
-=======
 //#include "tools/LogT"
 #include "Logger.h"
->>>>>>> 7bf56431a960a1eda458cf7ea0726e2f1630f06b
 #define LOG_BplusTree LOG_FILE("BplusTree")
 #define LOG_BplusTreeInfo LOG_FILE("BplusTreeInfo")
 
@@ -76,11 +70,8 @@ inline LogStream& operator<<(LogStream& s, const BplusNode<SIZE>& v)
     return s;
 }
 
-<<<<<<< HEAD
-=======
 
 
->>>>>>> 7bf56431a960a1eda458cf7ea0726e2f1630f06b
 template<int SIZE>
 class BplusInnerNode :public BplusNode<SIZE> {
 public:
@@ -109,20 +100,11 @@ public:
             }
             else if (key == this->keys[i]) {
                 LOG_BplusTree << "error: duplicate key!";
-<<<<<<< HEAD
-                throw std::logic_error("Duplicate key when adding key to inner node.");
-            }
-        }
-        LOG_BplusTree << "error: key out of range!";
-        throw std::domain_error("Param key is bigger than any other key, \
-                but the max key should have been set to no shorter than input key on insertion.");
-=======
                 std::exit(0);
             }
         }
         LOG_BplusTree << "error: key out of range!";
         std::exit(0);
->>>>>>> 7bf56431a960a1eda458cf7ea0726e2f1630f06b
     }
     bool addKeyAndChildByPos(int pos, int key, BplusNode<SIZE>* child) {
         if (key == this->keys[pos]) {
@@ -144,11 +126,7 @@ public:
         }
         if (this->keyNum <= pos || pos < 0) {
             LOG_FILE("BplusTree") << "error: pos out of range!";
-<<<<<<< HEAD
-            throw std::out_of_range("Param pos is out of valid range");
-=======
             std::exit(0);
->>>>>>> 7bf56431a960a1eda458cf7ea0726e2f1630f06b
         }
         if (delChild) {
             delete this->children[pos];
@@ -281,11 +259,7 @@ public:
         }
         else {
             LOG_BplusTree << "can't find merge inner node";
-<<<<<<< HEAD
-            throw std::runtime_error("Failed on merging inner node!");
-=======
             std::exit(0);
->>>>>>> 7bf56431a960a1eda458cf7ea0726e2f1630f06b
         }
     }
 
@@ -312,11 +286,7 @@ public:
             }
             else if (key == this->keys[pos]) {
                 LOG_BplusTree << "duplicate key!";
-<<<<<<< HEAD
-                throw std::runtime_error("Found duplicate key when split leaf node!");
-=======
                 std::exit(0);
->>>>>>> 7bf56431a960a1eda458cf7ea0726e2f1630f06b
             }
             else {
                 break;
@@ -448,52 +418,18 @@ public:
     }
 };
 
-<<<<<<< HEAD
-
-=======
->>>>>>> 7bf56431a960a1eda458cf7ea0726e2f1630f06b
 template<int SIZE>
 class BplusTree {
 public:
     typedef BplusNode<SIZE> Node;
     typedef BplusLeafNode<SIZE> LeafNode;
     typedef BplusInnerNode<SIZE> InnerNode;
-<<<<<<< HEAD
-    struct Anchor {
-        int step = 0;
-        int startKey = 0;
-        int pos = 0;
-        LeafNode* node;
-        bool isValid;
-    //public:
-    //    //这个Anchor是有风险的，它无法保证插入或者删除节点之后内部保存的节点还有效！
-    //    //可以把Anchor存在该对象中来保证，如果插入或者删除了节点就把Anchor内部参数置为无效?
-    //    Anchor(LeafNode* n, int p) :pos(p) { node = *n; }
-    //    
-    };
-    InnerNode* root;
-    LeafNode* head = nullptr;
-    Anchor anchor;
-    int keyNum;
-    //head是节点粒度。anchor是key粒度。
-
-public:
-    
-    
-
-    BplusTree() :root(new InnerNode()), anchor{0,0,0, nullptr, false} {
-        root->parent = nullptr;//必须赋nullptr。InnerNode如果没有parent则不受最小节点限制。
-    }
-    void insert(int key) {
-        anchor.isValid = false;
-=======
     InnerNode* root;
     LeafNode* head = nullptr;
     BplusTree():root(new InnerNode()){
         root->parent = nullptr;//必须赋nullptr。InnerNode如果没有parent则不受最小节点限制。
     }
     void insert(int key) {
->>>>>>> 7bf56431a960a1eda458cf7ea0726e2f1630f06b
         if (root->keyNum == 0) {
             head = new LeafNode(key);
             head->next = head;
@@ -522,24 +458,13 @@ public:
             //给叶子节点插入key
             LeafNode* leafNode = static_cast<LeafNode*>(node);
             if (leafNode->isFull()) {//键已满
-<<<<<<< HEAD
-                auto leftLeafNode = leafNode->splitNode(key, parentPos.top());keyNum += 1;
-=======
                 auto leftLeafNode = leafNode->splitNode(key, parentPos.top());
->>>>>>> 7bf56431a960a1eda458cf7ea0726e2f1630f06b
                 int newKey = leafNode->getMaxKey();
                 splitInnerNode(newKey, leafNode->parent, leftLeafNode, parentPos);
             }else{
                 if (!leafNode->addKey(key)) {
                     return;
-<<<<<<< HEAD
-                }else{
-                    keyNum += 1;
-                }
-                
-=======
                 }   
->>>>>>> 7bf56431a960a1eda458cf7ea0726e2f1630f06b
             }
         }
     }
@@ -567,14 +492,8 @@ public:
     void remove(int key) {
         if (root == nullptr) {
             LOG_BplusTree << "error: empty tree!";
-<<<<<<< HEAD
-            throw std::runtime_error("The root of bplusTree is unexpectedly set nullptr.");
-        }
-        anchor.isValid = false;
-=======
             std::exit(0);
         }
->>>>>>> 7bf56431a960a1eda458cf7ea0726e2f1630f06b
         //找到叶子节点
         Node* node = root;
         std::stack<int> parentPos = {};
@@ -594,10 +513,6 @@ public:
             LOG_BplusTree << "fail: key " << key << " is not in tree!";
             return;
         }
-<<<<<<< HEAD
-        keyNum -= 1;
-=======
->>>>>>> 7bf56431a960a1eda458cf7ea0726e2f1630f06b
         //删除叶子节点的key
         LeafNode* leafNode = static_cast<LeafNode*>(node);
         if (!leafNode->deleteKeyByPos(keyPos)) {
@@ -639,73 +554,6 @@ public:
         }
     }
 
-<<<<<<< HEAD
-    int getKeyNum(){return keyNum;}
-    //设置Anchor指向的key（如果不存在则指向前一个）
-    void setAnchor(int key, bool setHead = false) {
-        if (head == nullptr) {
-            LOG_BplusTree << "fail: tree has no key!";
-            throw std::runtime_error("Tree has no key. Add key before setAnchor!");
-        }
-        //找到叶子节点
-        Node* node = root;
-        int pos;
-        while (!node->isLeaf) {
-            pos = node->searchKey(key);
-            if (pos == node->keyNum) {//如果pos比当前最大的还要大。
-                while (!node->isLeaf) {
-                    //直接搜索当前节点的最大值节点。
-                    node = static_cast<InnerNode*>(node)->children[node->keyNum - 1];
-                }
-                if (setHead) {
-                    head = static_cast<LeafNode*>(node)->next;
-                }
-                anchor.isValid = true;
-                anchor.node = static_cast<LeafNode*>(node)->next;
-                anchor.pos = 0;
-                anchor.startKey = anchor.node->keys[pos];
-                anchor.step = 0;
-                return;
-            }
-            else {
-                node = static_cast<InnerNode*>(node)->children[pos];
-            }
-        }
-        pos = node->searchKey(key);
-        if (setHead) {
-            head = static_cast<LeafNode*>(node);
-        }
-        anchor.isValid = true;
-        anchor.node = static_cast<LeafNode*>(node);
-        anchor.pos = pos;
-        anchor.startKey = anchor.node->keys[pos];
-        anchor.step = 0;
-        return;
-    }
-    int getNextKeyByAnchor(bool toNext) {
-        if (anchor.isValid) {
-            int key = anchor.node->keys[anchor.pos];
-            if(anchor.step>=1 && key == anchor.startKey){
-                return -1;
-            }
-            if(toNext){
-                if (anchor.node->keyNum - 1 > anchor.pos) {
-                    anchor.pos += 1;
-                }
-                else {
-                    anchor.node = anchor.node->next;
-                    anchor.pos = 0;
-                }
-                anchor.step += 1;
-            }
-            return key;
-        }
-        else {
-            LOG_BplusTree << "fail: anchor is not valid!";
-            throw std::logic_error("Anchor is not valid. \
-                Insert or remove will reset anchor to invalid. Call setAnchor before getNextKeyByAnchor. ");
-            //抛出异常后函数会被中断，不需要返回值。
-=======
     //寻找键值的最大值大于等于key的节点。
     LeafNode* findNotBefore(int key) {
         if (root->keyNum == 0) {
@@ -727,7 +575,6 @@ public:
                 node = static_cast<InnerNode*>(node)->children[pos];
             }
             return static_cast<LeafNode*>(node);
->>>>>>> 7bf56431a960a1eda458cf7ea0726e2f1630f06b
         }
     }
 };
@@ -738,16 +585,11 @@ inline LogStream& operator<<(LogStream& s, const BplusTree<SIZE>& v)
     std::vector<BplusNode<SIZE>*> nodeLayer;
     std::vector<BplusNode<SIZE>*> nodeNextLayer;
     nodeLayer.push_back(v.root);
-<<<<<<< HEAD
-    if (v.root) {
-        s << "\n\n";
-=======
     if (v.head) {
         s << "<" << *v.head << ">";
     }
     if (v.root) {
         s << "\n";
->>>>>>> 7bf56431a960a1eda458cf7ea0726e2f1630f06b
         s << *v.root;
         while (nodeLayer.size()) {
             s << "----";
@@ -784,13 +626,6 @@ inline LogStream& operator<<(LogStream& s, const BplusTree<SIZE>& v)
         }
         s << "}";
     }
-<<<<<<< HEAD
-    if (v.anchor.isValid) {
-        s << "\nAnchor:{" << v.anchor.node->keys[v.anchor.pos];
-    }
-    
-=======
->>>>>>> 7bf56431a960a1eda458cf7ea0726e2f1630f06b
     return s;
 }
 
