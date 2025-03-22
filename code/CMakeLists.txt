@@ -19,8 +19,4 @@ add_executable(code_craft                   ${cur_src}) # ！！！不要修改 
 #endif (NOT WIN32)
 # 指定静态库的路径
 set(LOGTOOL_PATH "${CMAKE_SOURCE_DIR}/tools/libLogTool.a")
-<<<<<<< HEAD
 target_link_libraries(code_craft PRIVATE ${LOGTOOL_PATH})
-=======
-target_link_libraries(test PRIVATE ${LOGTOOL_PATH})
->>>>>>> 7bf56431a960a1eda458cf7ea0726e2f1630f06b

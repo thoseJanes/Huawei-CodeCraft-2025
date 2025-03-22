@@ -1,7 +1,6 @@
 #if !defined(CIRCULARLIST_H)
 #define CIRCULARLIST_H
 #include <assert.h>
-<<<<<<< HEAD
 #include ".\tools\Logger.h"
 
 #define LOG_LINKEDSPACE LOG_FILE("circularLinkedList")
@@ -10,13 +9,6 @@ struct SpaceUnitNode{
     int pos;
     SpaceUnitNode* next;
     SpaceUnitNode(int value):pos(value),next(nullptr){}
-=======
-#include "bplusTree.h"
-struct SpaceUnitNode{
-    int pos;
-    SpaceUnitNode* next;
-    SpaceUnitNode(int value):pos(value){}
->>>>>>> 7bf56431a960a1eda458cf7ea0726e2f1630f06b
 };
 
 class SpacePieceNode{
@@ -34,14 +26,11 @@ public:
     int getStart() const {return pos;}
 };
 
-<<<<<<< HEAD
 LogStream& operator<<(LogStream& s, const SpacePieceNode& node) {
     s << "(" << node.getStart() << "," << node.getLen() + node.getStart() - 1 << ")";
     return s;
 }
 
-=======
->>>>>>> 7bf56431a960a1eda458cf7ea0726e2f1630f06b
 // store free space of disk.
 // TO BE UPDATED: use red-black tree
 class CircularSpacePiece {
@@ -69,23 +58,15 @@ private:
     }
     
 public:
-<<<<<<< HEAD
     CircularSpacePiece(int size) :spaceSize(size), tolSpace(size), head(new Node(0, size)) {
         head->next = head;//循环
     }
 
     const Node* getHead() const { return head; }
-=======
-    CircularSpacePiece(int size) :spaceSize(size), tolSpace(size), head(new Node(0, spaceSize)) {}
->>>>>>> 7bf56431a960a1eda458cf7ea0726e2f1630f06b
 
     int getDistance(int target, int base){//磁头(只能单向移动)。目标位置from相对于基准位置base的移动距离。
         return (target - base + spaceSize)%spaceSize;
     }
-<<<<<<< HEAD
-=======
-
->>>>>>> 7bf56431a960a1eda458cf7ea0726e2f1630f06b
     //尝试把前面的节点nodeAhead与后面起始点为start，长度为len的节点合并。
     //如果合并成功，将会修改nodeAhead的长度。
     bool testMerge(Node* nodeAhead, int start, int len, bool allowOverlap){
@@ -96,22 +77,15 @@ public:
         if(aheadToStart <= nodeAhead->len){
             if(aheadToStart < nodeAhead->len){
                 if(allowOverlap){
-<<<<<<< HEAD
                     nodeAhead->len = std::max(aheadToStart + len, nodeAhead->len);
                 }else{
                     throw std::logic_error("overlap insert interval!");//插入空白区域与已有空白区域发生重叠。错误。
-=======
-
-                }else{
-                    assert(false);//插入空白区域与已有空白区域发生重叠。错误。
->>>>>>> 7bf56431a960a1eda458cf7ea0726e2f1630f06b
                 }
             }else if(aheadToStart == nodeAhead->len){
                 nodeAhead->len = aheadToStart+len;
             }
             
             if(nodeAhead->len >= spaceSize){
-<<<<<<< HEAD
                 //assert(false);//磁盘全都空出来了。待处理。
                 //删除除了nodeAhead外的所有节点
                 auto tempNode = nodeAhead->next;
@@ -123,9 +97,6 @@ public:
                 tempNode->next = tempNode;
                 tempNode->pos = 0;
                 tempNode->len = spaceSize;
-=======
-                assert(false);//磁盘全都空出来了。待处理。
->>>>>>> 7bf56431a960a1eda458cf7ea0726e2f1630f06b
             }
             return true;
         }
@@ -134,13 +105,10 @@ public:
     
     //根据start，插入+合并，如果插入的空白区域与已有空白区域重叠，则会报错。
     void dealloc(int start, int len) {
-<<<<<<< HEAD
         if (start < 0 || start >= spaceSize || len <= 0) {
             throw std::out_of_range("param out of range");
         }
         LOG_LINKEDSPACE << "dealloc:" << "(" << start << ", " << len << ")\n";
-=======
->>>>>>> 7bf56431a960a1eda458cf7ea0726e2f1630f06b
         if (head == nullptr) {
             Node* newNode = new Node(start, len);
             head = newNode;
@@ -151,15 +119,11 @@ public:
             //这里可以确认start与headpos的距离>=nodeAhead与headpos的距离。放在nodeAhead之后。
             //首先确认start能否与nodeAhead合并
             Node* newNode;
-<<<<<<< HEAD
             Node* nodeAfter = nodeAhead->next;
-=======
->>>>>>> 7bf56431a960a1eda458cf7ea0726e2f1630f06b
             if(testMerge(nodeAhead, start, len, false)){
                 newNode = nodeAhead;
             }
             else{
-<<<<<<< HEAD
                 newNode = new Node(start, len);
                 newNode->next = nodeAhead->next;
                 nodeAhead->next = newNode;
@@ -172,26 +136,11 @@ public:
                 }
                 delete nodeAfter;
             }
-=======
-                Node* newNode = new Node(start, len);
-            }
-            //然后判断上一个节点（newNode或者合并了nodeAhead的newNode）能否与nodeAfter合并。
-            Node* nodeAfter = nodeAhead->next;
-            if(testMerge(newNode, nodeAfter->pos, nodeAfter->len, false)){
-                nodeAhead->next = nodeAfter->next;//若newNode=nodeAhead，也没毛病。
-                delete nodeAfter;
-                nodeAfter = nodeAfter->next;
-            }
-            //最后插入节点。
-            nodeAhead->next = newNode;//若newNode=nodeAhead，也没毛病。
-            newNode->next = nodeAfter;
->>>>>>> 7bf56431a960a1eda458cf7ea0726e2f1630f06b
         }
         tolSpace += len;
     }
     //尝试分配空间，如果成功，将会修改空间节点。
     bool testAlloc(int start, int len){
-<<<<<<< HEAD
         if (start < 0 || start >= spaceSize || len <= 0) {
             throw std::out_of_range("param out of range");
         }
@@ -199,20 +148,11 @@ public:
         if (head == nullptr) {
             return false;
         } else{
-=======
-        if (head == nullptr) {
-            return false;
-        } else if(head==head->next) {
->>>>>>> 7bf56431a960a1eda458cf7ea0726e2f1630f06b
             Node* nodeAhead = getAheadNode(start);
             int startToAhead = getDistance(start, nodeAhead->pos);
             if(startToAhead==0){//如果start与某个节点的起始点重合。
                 if(nodeAhead->len > len){
-<<<<<<< HEAD
                     nodeAhead->pos += len;
-=======
-                    nodeAhead->pos += start;
->>>>>>> 7bf56431a960a1eda458cf7ea0726e2f1630f06b
                     nodeAhead->pos %= spaceSize;
                     nodeAhead->len -= len;
                     tolSpace -= len;
@@ -224,36 +164,24 @@ public:
                         tolSpace -= len;
                         return true;//返回唯一的头节点。
                     }else{//nodeAhead还有后继。那么需要找到其前驱重新链表，然后返回nodeAhead。
-<<<<<<< HEAD
                         Node* nodeBefore = nodeAhead->next;
-=======
-                        Node* nodeBefore;
->>>>>>> 7bf56431a960a1eda458cf7ea0726e2f1630f06b
                         while(nodeBefore->next != nodeAhead){
                             nodeBefore = nodeBefore->next;
                         }
                         nodeBefore->next = nodeAhead->next;
-<<<<<<< HEAD
                         if (nodeAhead == head) {
                             head = nodeAhead->next;
                         }
-=======
->>>>>>> 7bf56431a960a1eda458cf7ea0726e2f1630f06b
                         delete nodeAhead;
                         tolSpace -= len;
                         return true;
                     }
-<<<<<<< HEAD
                 }else if(start + len > spaceSize){//没有足够的空间来分配！
-=======
-                }else{//没有足够的空间来分配！
->>>>>>> 7bf56431a960a1eda458cf7ea0726e2f1630f06b
                     return false;
                 }
             }else{
                 //需要长度大于start终点与nodeAhead的距离。 如果等于，则刚好在nodeAhead范围之外。
                 int endToAhead = getDistance((start+len)%spaceSize, nodeAhead->pos);
-<<<<<<< HEAD
                 if(nodeAhead->len == endToAhead){//刚好在尾部。
                     nodeAhead->len -= len;
                     tolSpace -= len;
@@ -270,18 +198,6 @@ public:
                         nodeAhead->next = splitNode;
                         tolSpace -= len;
                     }
-=======
-                if(nodeAhead->len == endToAhead-1){//刚好在尾部。
-                    nodeAhead->len -= len;
-                    tolSpace -= len;
-                    return true;
-                }else if(nodeAhead->len < endToAhead-1){//在中间，需要分裂节点。
-                    Node* splitNode = new Node((start+len+1)%spaceSize, nodeAhead->len-endToAhead-1);
-                    nodeAhead->len = startToAhead;
-                    splitNode->next = nodeAhead->next;
-                    nodeAhead->next = splitNode;
-                    tolSpace -= len;
->>>>>>> 7bf56431a960a1eda458cf7ea0726e2f1630f06b
                     return true;
                 }else{//start+len在nodeAhead空间之外。
                     return false;
@@ -315,13 +231,8 @@ public:
     //     std::cout << std::endl;
     // }
 
-<<<<<<< HEAD
     // 析构函数
     ~CircularSpacePiece() {
-=======
-    // 销毁链表
-    void destroy() {
->>>>>>> 7bf56431a960a1eda458cf7ea0726e2f1630f06b
         if (head == nullptr) return;
 
         Node* current = head;
@@ -334,7 +245,6 @@ public:
 
         head = nullptr;
     }
-<<<<<<< HEAD
 };
 
 
@@ -349,34 +259,5 @@ LogStream& operator<<(LogStream& s, CircularSpacePiece& linkedList) {
     s << "}\n";
     return s;
 }
-=======
-
-    // 析构函数
-    ~CircularSpacePiece() {
-        destroy();
-    }
-};
-
-// store position of requested obj unit on disk
-// TO BE UPDATED: use B+ tree
-// 问题在于，需要轮转。可以存储头结点的位置，然后通过
-class CircularSpaceUnit:public BplusTree<6>{
-public:
-    typedef SpaceUnitNode Node;
-    //需要包含磁头节点？如何把头节点和需要获取的节点区分开来？或者不包含，直接从外部获取,并且使用外部传参来轮转。
-    CircularSpaceUnit():BplusTree(){};
-    
-    void addReqUnit(int unitPos){
-        this->insert(unitPos);
-    }
-    void rmReqUnit(int unitPos){
-        this->remove(unitPos);
-    }
-    void roundToHead(int headPos){
-        
-    }
-
-};
->>>>>>> 7bf56431a960a1eda458cf7ea0726e2f1630f06b
 
 #endif // CIRCULARLIST_H
