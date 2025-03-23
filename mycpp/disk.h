@@ -9,12 +9,18 @@
 #include "object.h"
 # include <string>
 # include <unordered_set>
+# include "global_info.h"
 
 class Disk {
 public:
 
-    Disk(int _v,int _G, std::vector<Request>& _request, std::vector<Object>& _object) :pos(1), size(0), unit(std::vector<int> (_v + 1, 0)),obj_pos(std::vector<char> (_v+1,0)),
-                        maxG(_G),preAction(-1),reqID(-1),V(_v), request(_request), object(_object) {}
+    Disk(int _v,int _G, std::vector<Request>& _request, std::vector<Object>& _object, const GlobalInfo& _info) :pos(1), size(0), unit(std::vector<int> (_v + 1, 0)),obj_pos(std::vector<char> (_v+1,0)),
+                        maxG(_G),preAction(-1),reqID(-1),V(_v), request(_request), object(_object),globalInfo(_info),tagBegins(std::vector<int>(_info.tagSize.size(),0)),curG(_G) {
+                            float step = 1.0*V/_info.tagSizeSum;
+                            for(int i = 1; i < _info.tagSize.size(); i++){
+                                tagBegins[i] = tagBegins[i-1] + static_cast<int>(_info.tagSize[i-1]*step);
+                            }
+                        }
 
     void do_object_delete(const std::vector<int>& object_unit)
     {
@@ -30,10 +36,50 @@ public:
     {
         int current_write_point = 0;
         int objsize = object_unit.size() - 1;
-        //遍历找空位塞入， 从pos开始找
-        for (int i = 1; i < unit.size(); i++) {
-            int shift_pos = (pos + i - 1 + maxG/16) % V + 1;
 
+        // // 只找位置连续够的位置 -------------------策略似乎没用-------------------
+        // bool flag = false;
+        // for(int i = 1; i <= V; i++){
+        //     int shift_pos = (tagBegins[object[object_id].tag]+i) % V + 1;  //遍历找空位塞入， 从tagpos开始找
+        //     if(unit[shift_pos] == 0){
+        //         int cnt = 0;
+        //         for(int j = 0; j < objsize; j++){
+        //             if(unit[(shift_pos+j)%V+1] == 0){
+        //                 cnt++;
+        //             }
+        //         }
+        //         if(cnt == objsize){
+        //             for(int j = 0; j < objsize; j++){
+        //                 unit[(shift_pos+j)%V+1] = object_id;
+        //                 object_unit[++current_write_point] = (shift_pos+j)%V+1;
+        //                 obj_pos[(shift_pos+j)%V+1] = current_write_point;
+        //             }
+        //             flag = true;
+        //             break;
+        //         }
+        //     }
+        // }
+        // // 如果没有找到位置就分散存储
+        // if(!flag){
+        //     for (int i = 1; i < unit.size(); i++) {
+        //         int shift_pos = (pos + i - 1 + maxG/16) % V + 1;  //遍历找空位塞入， 从pos开始找
+        //         //int shift_pos = (tagBegins[object[object_id].tag]+i) % V + 1;  //遍历找空位塞入， 从tagpos开始找
+                
+        //         if (unit[shift_pos] == 0) {
+        //             unit[shift_pos] = object_id;
+        //             object_unit[++current_write_point] = shift_pos;
+        //             obj_pos[shift_pos] = current_write_point; //记录位置
+        //             if (current_write_point == objsize) {
+        //                 break;
+        //             }
+        //         }
+        //     }
+        // }
+
+        for (int i = 1; i < unit.size(); i++) {
+            int shift_pos = (pos + i + maxG/16) % V + 1;  //遍历找空位塞入， 从pos开始找， 这里纯调参
+            //int shift_pos = (tagBegins[object[object_id].tag]+i) % V + 1;  //遍历找空位塞入， 从tagpos开始找
+            
             if (unit[shift_pos] == 0) {
                 unit[shift_pos] = object_id;
                 object_unit[++current_write_point] = shift_pos;
@@ -43,6 +89,7 @@ public:
                 }
             }
         }
+
 
         assert(current_write_point == objsize);
         size += objsize;
@@ -131,5 +178,8 @@ public:
     const int V; //磁盘大小
     std::vector<Request>& request;
     std::vector<Object>& object;
+    const GlobalInfo& globalInfo;
+    private:
+    std::vector<int> tagBegins;
 
 };

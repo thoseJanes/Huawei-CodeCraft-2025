@@ -15,6 +15,7 @@
 #include "util.h"
 #include <string>
 #include <algorithm>
+#include "global_info.h"
 
 int T, M, N, V, G; //T时间 M对象标签数 N硬盘数 V硬盘大小 G 每个硬盘令牌数
 std::vector<Request> request = std::vector<Request>(MAX_REQUEST_NUM);
@@ -82,22 +83,43 @@ void write_action()
     int n_write;
     scanf("%d", &n_write);
     for (int i = 1; i <= n_write; i++) {
-        int id, size;
-        scanf("%d%d%*d", &id, &size);
+        int id, size,tag;
+        scanf("%d%d%d", &id, &size,&tag);
+        object[id].tag = tag;
         object[id].size = size;
         object[id].is_delete = false;
 
         // 分配存储位置
+        std::unordered_set<int> st;//记录已经分配磁盘的位置
         for (int j = 1; j <= REP_NUM; j++) {
             // 查询是否有充足的空间
             for(int k = 1; k <= N; k++) {
-                int cur_disk = (id + k + j) % N + 1;
-                if (disk[cur_disk].size + size <= V) {
+                //int cur_disk = (id + k + j) % N + 1; // id顺序分配
+                int cur_disk = (tag + k + j) % N + 1; // tag顺序分配 -----有用-------
+                if (st.find(cur_disk) != st.end()) {
+                    continue;
+                }
+                if (disk[cur_disk].size + 10*size <= V) {
                     object[id].replica[j] = cur_disk;
                     break;
                 }
             }
+            // 没有充分的空间，那就找个占用最小的空间
+            if(object[id].replica[j] == 0){
+                int min_size = 1e9;
+                for(int k = 1; k <= N; k++) {
+                    if(st.find(k) != st.end()){
+                        continue;
+                    }
+                    if (disk[k].size < min_size) {
+                        min_size = disk[k].size;
+                        object[id].replica[j] = k;
+                    }
+                }
+            }
 
+
+            st.insert(object[id].replica[j]);
             object[id].unit[j] = std::vector<int> (size + 1, 0);
             // 分配具体位置
             disk[object[id].replica[j]].do_object_write(object[id].unit[j], id);
@@ -212,18 +234,24 @@ int main()
 {
     scanf("%d%d%d%d%d", &T, &M, &N, &V, &G);
 
-    for (int i = 1; i <= M; i++) {
-        for (int j = 1; j <= (T - 1) / FRE_PER_SLICING + 1; j++) {
-            scanf("%*d");
-        }
-    }
+    //前𝑚行中，第𝑖行第𝑗个数𝑓𝑟𝑒_𝑑𝑒𝑙[𝑖][𝑗]表示时间片编号𝑖𝑑满足 (𝑗 − 1) ∗ 1800 + 1 ≤ 𝑖𝑑 ≤ 𝑗 ∗1800的情况下，所有删除操作中对象标签为𝑖的对象大小之和
 
     for (int i = 1; i <= M; i++) {
         for (int j = 1; j <= (T - 1) / FRE_PER_SLICING + 1; j++) {
             scanf("%*d");
         }
     }
-
+    std::vector<int> tagSize(M+1,0);
+    //接下来𝑚行，第𝑖行第𝑗个数𝑓𝑟𝑒_𝑤𝑟𝑖𝑡𝑒[𝑖][𝑗]表示时间片编号𝑖𝑑满足 (𝑗 − 1) ∗ 1800 + 1 ≤ 𝑖𝑑 ≤ 𝑗 ∗ 1800的情况下，所有写入操作中对象标签为𝑖的对象大小之和
+    for (int i = 1; i <= M; i++) {
+        for (int j = 1; j <= (T - 1) / FRE_PER_SLICING + 1; j++) {
+            int tmp;
+            scanf("%d", &tmp);
+            tagSize[i] += tmp;
+        }
+    }
+    GlobalInfo globalInfo(std::move(tagSize));
+    //接下来𝑚行，第𝑖行第𝑗个数𝑓𝑟𝑒_𝑟𝑒𝑎𝑑[𝑖][𝑗]表示时间片编号𝑖𝑑满足 (𝑗 − 1) ∗ 1800 + 1 ≤ 𝑖𝑑 ≤ 𝑗 ∗1800的情况下，所有读取操作中对象标签为𝑖的对象大小之和
     for (int i = 1; i <= M; i++) {
         for (int j = 1; j <= (T - 1) / FRE_PER_SLICING + 1; j++) {
             scanf("%*d");
@@ -234,7 +262,7 @@ int main()
     fflush(stdout);
 
     //初始化磁盘
-    disk = std::vector<Disk>(N+1, Disk(V, G, request, object));
+    disk = std::vector<Disk>(N+1, Disk(V, G, request, object, globalInfo));
 
     for (int t = 1; t <= T + EXTRA_TIME; t++) {
         freshAll();
