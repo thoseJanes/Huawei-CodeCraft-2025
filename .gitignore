@@ -1,16 +1,26 @@
-.vscode/
-code/build/
+*.zip
+*.txt
+
+code/
+codec/build/
+codec/.vs/
+codec/*.exe
+codec/code_craft
+linuxCode/build/
+
 demos/
 replay/
 code_craft_2025/
 interactor/
-data/*.in
-data/__pycache__
+
 2025华为软件精英挑战赛初赛任务书 v1.pdf
 2025华为软件精英挑战赛初赛样例数据 v1.pdf
 2025华为软件精英挑战赛题目与判题器补充说明 v1.pdf
-debug.txt
-result.txt
+
+log/
+.vscode/
+data/*.in
+data/__pycache__
 
 note/
 
