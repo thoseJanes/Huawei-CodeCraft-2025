@@ -1,6 +1,8 @@
 *.zip
 *.txt
 
+runPro2.bat
+
 code/
 codec/build/
 codec/.vs/
