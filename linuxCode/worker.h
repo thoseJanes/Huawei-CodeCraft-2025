@@ -49,15 +49,16 @@ public:
     }
     
     void freshObjectScore(){
-        auto it = requestedObjects.begin();
-        while(it!=requestedObjects.end()){
-            Object* obj = *it;
+        //auto it = requestedObjects.begin();
+        int i = 0;
+        while(i != requestedObjects.size()){
+            Object* obj = requestedObjects[i];
             //对于overtime，第105个时间片分数还是会减，
             //减完了如果发现分数是0,那么这时候应该只有overtime的req。
             //然后再更新overtime，这时候才会把edgeValue清零。
 
             //对于phaseTwo，是第11个时间片才开始多减，所以应该在第10个时间片更新。
-            obj->score -= obj->edgeValue * SCORE_FACTOR(obj->size);
+            obj->clockScore();
             if(obj->score < 0){
                 throw std::logic_error("something wrong. score is less than zero. ");
             }
@@ -68,10 +69,12 @@ public:
                     throw std::logic_error("obj should only has overtime requests,\
                          and number of them equals edgeValue/PHASE_TWO_EDGE");
                 }else{
-                    it = requestedObjects.erase(it);
+                    std::swap(requestedObjects[i], requestedObjects.back());
+                    requestedObjects.pop_back();//换到最后并删除。i不变。
+                    // requestedObjects.erase(it);
                 }
             }else{
-                it++;
+                i++;
             }
         }
     }
@@ -103,8 +106,8 @@ public:
             if(requestsPtr[phaseTwoTop] != &deletedRequest){
                 auto req = requestsPtr[phaseTwoTop];
                 auto obj = sObjectsPtr[req->objId];
-                //补上第二阶段的边缘。这一边缘还未用于更新。
-                obj->edgeValue += PHASE_TWO_EDGE - PHASE_ONE_EDGE;
+                //补上第二阶段的边缘。这一边缘还未用于更新。是下一个时间步的边缘（这个时间步在规划中使用它，很合理）
+                obj->freshPhaseTwoEdge(1-req->is_done);
             }
             phaseTwoTop += 1;//静态变量加一，循环停止时，或者为nullptr，或者上一个req在下一帧正式进入phase2,
         }
@@ -147,6 +150,22 @@ public:
             for (int i = 0; i < REP_NUM; i++) {
                 int diskId = obj->replica[i];
                 LOG_BplusTreeN(diskId) << "delete obj " << obj->objId << " reqUnit on deleting it";
+            }
+
+            //在被请求对象中删除该对象。
+            if(obj->score != 0){
+                for(int i=0;i<requestedObjects.size();i++){
+                    if(requestedObjects[i] == obj){
+                        std::swap(requestedObjects[i], requestedObjects.back());
+                        requestedObjects.pop_back();
+                        break;
+                    }
+                    if(i==requestedObjects.size()-1){
+                        //未找到对象！！
+                        throw std::logic_error("obj has score not zero. \
+                            but can't be found in requestedObjects");
+                    }
+                }
             }
             
             LOG_OBJECT << "start free space";

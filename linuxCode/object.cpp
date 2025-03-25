@@ -5,7 +5,7 @@ Object deletedObject(0, 0, -1);//id为0 tag是负一。
 Request deletedRequest(-1, -1, 0);
 Object* sObjectsPtr[MAX_OBJECT_NUM] = {&deletedObject};//这样其他值会被赋值为nullptr
 Request* requestsPtr[MAX_REQUEST_NUM] = {&deletedRequest};//给第0个赋删除值。
-std::list<Object*> requestedObjects = {};//存在请求的对象链表。
+std::vector<Object*> requestedObjects = {};//存在请求的对象。
 int overtimeReqTop = 0;//在requestPtr中，超时的request的顶部,也即指向第一个未超时的request。
 int phaseTwoTop = 0;//在requestPtr中，进入第二阶段的request的顶部,也即指向第一个未进入第二阶段的request。
 

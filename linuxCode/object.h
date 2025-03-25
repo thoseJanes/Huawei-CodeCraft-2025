@@ -16,7 +16,7 @@ extern Object deletedObject;//作为一个被删除/不存在的对象。
 extern Request deletedRequest;
 extern Object* sObjectsPtr[MAX_OBJECT_NUM];
 extern Request* requestsPtr[MAX_REQUEST_NUM];
-extern std::list<Object*> requestedObjects;//通过该链表可以更新价值。并且通过该链表排序。对象被删除时也要更新。
+extern std::vector<Object*> requestedObjects;//通过该链表可以更新价值。并且通过该链表排序。对象被删除时也要更新。
 extern int overtimeReqTop;//指向的req刚好未过期，或者为nullptr
 extern int phaseTwoTop;//或者为nullptr，或者指向的上一个位置的req在下一帧正式进入phase2
 
@@ -38,6 +38,21 @@ public:
             is_done += 1;
         }
     }
+    void calScore(int size, int* getScore, int* getEdgeValue){
+        int offset = Watch::getTime() - this->createdTime;
+        if(offset<=PHASE_ONE_TIME){
+            *getScore = SCORE_FACTOR(size)*(START_SCORE - PHASE_ONE_EDGE*offset);
+            *getEdgeValue = PHASE_ONE_EDGE;
+        }else if(offset<EXTRA_TIME){
+            //第二阶段
+            *getScore = SCORE_FACTOR(size)*(START_SCORE + (PHASE_TWO_EDGE-PHASE_ONE_EDGE)*PHASE_ONE_TIME - PHASE_TWO_EDGE*offset);
+            *getEdgeValue = PHASE_TWO_EDGE;
+        }
+    }
+    // int getEdgeValue(){
+    //     int edgeValue = ((Watch::getTime() - this->createdTime)<=10)?PHASE_ONE_EDGE:PHASE_TWO_EDGE;
+    //     return edgeValue;
+    // }
     int objId;
     int reqId;
     bool* unitFlag;
@@ -77,25 +92,32 @@ public:
     //价值
     int score = 0;//当前请求剩余的总分数
     int edgeValue = 0;//下一个时间步分数降低多少
+    int* coScore;
+    int* coEdgeValue;
     
     std::list<Request*> objRequests;//sorted by time//不包含已完成请求。
 
     Object(int id, int size, int tag):objId(id),tag(tag),size(size){
         //this->unitReqNum = (int*)malloc((REP_NUM+3)*size*sizeof(int));//malloc分配0空间是合法操作。
         //分配内存
-        this->unitReqNum = (int*)malloc(size*(REP_NUM+4)*sizeof(int));
+        this->unitReqNum = (int*)malloc(size*(REP_NUM+6)*sizeof(int));
         for(int i=0;i<REP_NUM;i++){
             this->unitOnDisk[i] = this->unitReqNum + size*(i+1);
         }
         this->planReqUnit = this->unitReqNum + size*(REP_NUM+1);
         this->planReqTime = this->unitReqNum + size*(REP_NUM+2);
         this->unitReqNumOrder = this->unitReqNum + size*(REP_NUM+3);//在commitunit时维护。
+
+        this->coScore = this->unitReqNum + size*(REP_NUM+4);
+        this->coEdgeValue = this->unitReqNum + size*(REP_NUM+5);
         //初始化
         for(int i=0;i<size;i++){
             this->unitReqNum[i] = 0;
             this->planReqUnit[i] = -1;
             this->planReqTime[i] = -1;
             this->unitReqNumOrder[i] = i;
+            this->coScore[i] = 0;
+            this->coEdgeValue[i] = 0;
         }
     }
 
@@ -134,7 +156,6 @@ public:
     }
     //确认单元之后，需要在reqSpace中删除其它副本。
     
-
     /// @brief commit a unit which has been read.
     /// @param unitOrder unit order in object
     /// @param doneRequestIds requests completed by this unit will be push_back to this vector.
@@ -143,17 +164,31 @@ public:
             throw std::out_of_range("obj unit out of range!");
         }
         
-        //删除请求，更新完成请求。
+        //删除请求，更新完成请求。更新分数。
         auto it=objRequests.begin();
         while(it!=objRequests.end()){
             Request* request = *it;
             request->commitUnit(unitOrder);
-            if(request->is_done > 0){
+            int getScore;int getEdge;
+            if(request->is_done > 0){//只要有请求done了，被完成的一定是剩余单元数最大的请求。
+                assert(unitOrder==unitReqNumOrder[0]);
                 LOG_REQUEST<<"request "<<request->reqId<<" done";
                 doneRequestIds->push_back(request->reqId);
+
+                request->calScore(this->size, &getScore, &getEdge);
+                flowDownScoreAndEdge(1, getScore, getEdge);
+                assert(this->coEdgeValue[0]==0);
+                assert(this->coScore[0]==0);
+
                 deleteRequest(request->reqId);
                 it = objRequests.erase(it);//it会指向被删除元素的下一个元素
             }else{
+                //更新协同分数值。
+                int coValue = -request->is_done+1;//协同值，也即剩余的请求单元数。
+                request->calScore(this->size, &getScore, &getEdge);
+                //这里只是协同分数的流动。协同分数还需要在别的地方更新！！！
+                flowDownScoreAndEdge(coValue, getScore, getEdge);
+
                 it++;
             }
         }
@@ -184,13 +219,12 @@ public:
         }
 
         //更新分数和边缘价值
-        this->score += START_SCORE*SCORE_FACTOR(size);//同一个对象最多支持2万个请求的计分。超过的话有可能分数值溢出。
-        this->edgeValue += PHASE_ONE_EDGE;//开始时每秒减5分，后续阶段由worker更新。
+        pushRequestScoreAndEdge();
 
         return newReqUnit;
     }
     //返回取消的请求单元(reqUnit)在obj中的位置(unitOrder)
-    std::vector<int> dropRequest(int reqId){
+    std::vector<int> dropOvertimeRequest(int reqId){//超时删除的请求。
         //更新obj内部的单元请求数，更新disk内的请求单元链表。
         std::vector<int> overtimeReqUnits = {};
         auto req = requestsPtr[reqId];
@@ -208,8 +242,10 @@ public:
         }else{
             throw std::logic_error("dropped request shold be the first request!");
         }
+        freshOvertimeEdge(1-req->is_done);
+        assert(overtimeReqUnits.size() == 1-req->is_done);//未完成的单元数，即协作值。
         deleteRequest(reqId);
-        this->edgeValue -= PHASE_TWO_EDGE;//一个请求已经被删除。更新边缘价值。
+        
         return overtimeReqUnits;
     }
     bool hasRequest(){
@@ -218,7 +254,6 @@ public:
         }
         return false;
     }
-
     //没有request或者只有超时的request。
     bool hasValidRequest(){
         if((!this->objRequests.size()) ||
@@ -227,9 +262,7 @@ public:
         }else{
             return true;
         }
-
     }
-    
     int getReqUnitSize(){
         int reqUnitSize;
         for(int i=0;i<this->size;i++){
@@ -239,6 +272,43 @@ public:
         }
         return reqUnitSize;
     }
+    
+    //score相关。更新score。
+    void pushRequestScoreAndEdge(){
+        this->score += START_SCORE*SCORE_FACTOR(size);//同一个对象最多支持2万个请求的计分。超过的话有可能分数值溢出。
+        this->edgeValue += PHASE_ONE_EDGE;//开始时每秒减5分，后续阶段由worker更新。
+        this->coScore[this->size-1] += START_SCORE*SCORE_FACTOR(size);
+        this->coEdgeValue[this->size-1] += PHASE_ONE_EDGE;
+    }
+    void flowDownScoreAndEdge(int coValue, int score, int edge){
+        assert(coValue>=1 && coValue <= size);
+        if(coValue==1){
+            this->edgeValue -= edge;
+            this->score -= score;
+            this->coEdgeValue[0] -= edge;
+            this->coScore[0] -= score;
+        }else{
+            this->coScore[coValue] -= score;//协同值比索引大1.
+            this->coEdgeValue[coValue] -= edge;
+            this->coScore[coValue-1] += score;
+            this->coEdgeValue[coValue-1] += edge;
+        }
+    }
+    void clockScore(){
+        this->score -= this->edgeValue * SCORE_FACTOR(this->size);
+        for(int i=0;i<this->size;i++){
+            this->coScore[i] -= this->coEdgeValue[i] * SCORE_FACTOR(this->size);
+        }
+    }
+    void freshPhaseTwoEdge(int coValue){
+        this->edgeValue += PHASE_TWO_EDGE - PHASE_ONE_EDGE;
+        this->coEdgeValue[coValue-1] += PHASE_TWO_EDGE - PHASE_ONE_EDGE;
+    }
+    void freshOvertimeEdge(int coValue){
+        this->edgeValue -= PHASE_TWO_EDGE;
+        this->coEdgeValue[coValue-1] -= PHASE_TWO_EDGE;
+    }
+
     //注意：如果一次取磁盘能满足多个请求，那么可以取得较大效益。
     //可以以Object来组织请求。
     ~Object(){
