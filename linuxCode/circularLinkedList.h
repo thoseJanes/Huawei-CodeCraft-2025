@@ -1,7 +1,7 @@
 #if !defined(CIRCULARLIST_H)
 #define CIRCULARLIST_H
 #include <assert.h>
-#include "Logger.h"
+#include "LogTool.h"
 
 #define LOG_LINKEDSPACE LOG_FILE("circularLinkedList")
 #define LOG_LINKEDSPACEN(x) LOG_FILE("circularLinkedList"+std::to_string(x))

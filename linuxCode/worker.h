@@ -5,10 +5,12 @@
 #include <memory>
 
 #include "bucketData.h"
-#include "disk.h"
+#include "diskManager.h"
 #include "object.h"
 
-
+//问题：原先是在哪里把object内部list的过期请求erase的？
+//在object规划时可能删除，但是由于在overtime中已经删除过一次了，应该会造成重复删除？，
+//原先根本没有删除overtime的req（因为overtimeReqTop是0，指向已经被删除的请求。）！！所以就是在object规划时删除的。
 class Worker{//obj由它管理。
 public:
     Worker(){
@@ -45,29 +47,69 @@ public:
             }
         }
     }
-    //利用请求的有序性来清除多余请求。但是需要反映到相应对象和存储空间中！
-    void clearOvertimeReq(){
-        int timeBound = Watch::getTime() - 105;
-        //删除的request的reqId为-1.
-        while(requestsPtr[overtimeReqTop]->reqId>=0 && timeBound > requestsPtr[overtimeReqTop]->createdTime){
-            auto req = requestsPtr[overtimeReqTop];
-            //先消除obj的统计数据影响
-            auto obj = sObjectsPtr[req->objId];
-            //删除obj内部的请求。这是为了确认顺序。主要用于log阶段。其实可以删除。
-            {
-                if(obj->objRequests[0]==req){
-                    ;
-                }else{
-                    assert(false);
-                }
-            }
-            //更新obj内部的Request和单元请求数，更新disk内的请求单元链表。
-            auto overtimeReqUnitsOrder = obj->dropRequest(overtimeReqTop);
-            diskManager.freshOvertimeReqUnits(*obj, overtimeReqUnitsOrder);
+    
+    void freshObjectScore(){
+        auto it = requestedObjects.begin();
+        while(it!=requestedObjects.end()){
+            Object* obj = *it;
+            //对于overtime，第105个时间片分数还是会减，
+            //减完了如果发现分数是0,那么这时候应该只有overtime的req。
+            //然后再更新overtime，这时候才会把edgeValue清零。
 
-            overtimeReqTop += 1;//静态变量加一，循环停止时，当前req即有效。
+            //对于phaseTwo，是第11个时间片才开始多减，所以应该在第10个时间片更新。
+            obj->score -= obj->edgeValue * SCORE_FACTOR(obj->size);
+            if(obj->score < 0){
+                throw std::logic_error("something wrong. score is less than zero. ");
+            }
+            if(obj->score == 0){
+                //此时，对象只有overtime的request。
+                if(obj->hasValidRequest() || 
+                        obj->edgeValue!=obj->objRequests.size() * PHASE_TWO_EDGE){
+                    throw std::logic_error("obj should only has overtime requests,\
+                         and number of them equals edgeValue/PHASE_TWO_EDGE");
+                }else{
+                    it = requestedObjects.erase(it);
+                }
+            }else{
+                it++;
+            }
         }
     }
+    //利用请求的有序性来清除多余请求。但是需要反映到相应对象和存储空间中！
+    void clearOvertimeReqAndFreshPhaseTwoReq(){
+        assert(overtimeReqTop<=phaseTwoTop);
+        int OvertimeTimeBound = Watch::getTime() - EXTRA_TIME;//假设在第0帧创建，request在第105帧后即为0
+        //创建时间小于/等于OvertimeTimeBound的都过期了。
+        while(requestsPtr[overtimeReqTop] != nullptr &&
+            requestsPtr[overtimeReqTop]->createdTime <= OvertimeTimeBound){
+            if(requestsPtr[overtimeReqTop] != &deletedRequest){
+                auto req = requestsPtr[overtimeReqTop];
+                //先消除obj的统计数据影响
+                auto obj = sObjectsPtr[req->objId];
+                //更新obj内部的Request和单元请求数，更新disk内的请求单元链表。
+                auto overtimeReqUnitsOrder = obj->dropRequest(overtimeReqTop);//需要在此之前更新价值
+                diskManager.freshOvertimeReqUnits(*obj, overtimeReqUnitsOrder);
+            }
+            overtimeReqTop += 1;//静态变量加一，循环停止时，当前req指向有效的req或者nullptr。
+        }
+        //如果对象的score为0,那么更新完overtime之后它的edgeValue也为0
+
+
+        //在第11帧才转向阶段二并且多减。由于更新阶段时已经更新完分数了。所以在第10个时间片就应该更新阶段
+        int phaseTwoTimeBound = Watch::getTime() - PHASE_ONE_TIME;
+        //创建时间小于/等于phaseTwoTimeBound的都在下一帧phase2了。
+        while(requestsPtr[phaseTwoTop] != nullptr
+                && requestsPtr[phaseTwoTop]->createdTime <= phaseTwoTimeBound){
+            if(requestsPtr[phaseTwoTop] != &deletedRequest){
+                auto req = requestsPtr[phaseTwoTop];
+                auto obj = sObjectsPtr[req->objId];
+                //补上第二阶段的边缘。这一边缘还未用于更新。
+                obj->edgeValue += PHASE_TWO_EDGE - PHASE_ONE_EDGE;
+            }
+            phaseTwoTop += 1;//静态变量加一，循环停止时，或者为nullptr，或者上一个req在下一帧正式进入phase2,
+        }
+    }
+    
     //刷新磁盘磁头令牌
     void freshDiskTokens(){
         this->diskManager.freshTokens();
@@ -98,9 +140,9 @@ public:
             LOG_IPCINFO  << id;
             Object* obj = sObjectsPtr[id];//获取要删除的对象
             HistoryBucket::addDel(1, obj->tag);//更新bucket数据
-            std::vector<Request*> requests = obj->objRequests;
-            for(int i=0;i<requests.size();i++){
-                requestIds.push_back(requests[i]->reqId);//获取对象相关的请求id
+            std::list<Request*>& requests = obj->objRequests;
+            for(auto it=requests.begin();it!=requests.end();it++){//这时候放入的请求应该都没过期且没delete
+                requestIds.push_back((*it)->reqId);//获取对象相关的请求id
             }
             for (int i = 0; i < REP_NUM; i++) {
                 int diskId = obj->replica[i];
@@ -198,7 +240,7 @@ public:
         }
         
         //规划读取过程。
-        diskManager.planUnitsRead();
+        diskManagessssssssr.planObjectsRead();
         
         //输出读取过程。
         for(int i=0;i<N;i++){//不同磁盘

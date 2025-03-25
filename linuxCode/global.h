@@ -1,8 +1,9 @@
 #ifndef GLOBAL_H
 #define GLOBAL_H
 
-#include "Logger.h"
+#include "LogTool.h"
 #include "time.h"
+#include <list>
 
 #define LOG_IPCINFO LOG_FILE("ipcInfo")
 
@@ -12,10 +13,40 @@
 #define MAX_OBJECT_NUM (100000 + 1)//id从1开始
 #define REP_NUM (3)
 #define FRE_PER_SLICING (1800)
+
+
+#define PHASE_ONE_TIME (10)
 #define EXTRA_TIME (105)
+#define START_SCORE (2000)
+#define SCORE_FACTOR(size) (size+1)
+#define PHASE_ONE_EDGE (10)
+#define PHASE_TWO_EDGE (20)
 
 
 #define FIRST_READ_CONSUME (64)
+
+static std::map<int, int> toNextReadConsume = {
+    {64, 52},{52, 42},{42, 34},{34, 28},{28, 23}, {23, 19},{19, 16}, {16, 16}
+};
+static std::vector<int> readConsumeAfterN = {
+    {64, 52, 42, 34, 28, 23, 19, 16}
+};
+static std::map<int, int> toAheadReadTimes = {
+    {64, 0},{52, 1},{42, 2},{34, 3},{28, 4}, {23, 5},{19, 6}, {16, 7}//8代表大于等于8
+};
+inline int getReadConsumeAfterN(int n){
+    if(n>readConsumeAfterN.size()-1){
+        return 16;
+    }else{
+        return readConsumeAfterN[n];
+    }
+}
+inline int getNextReadConsume(int presentConsume){
+    return toNextReadConsume[presentConsume];
+}
+inline int getAheadReadTimes(int nextReadConsume){
+    return toAheadReadTimes[nextReadConsume];
+}
 
 extern int T;//时间步
 extern int M;//tag数，输入tag从1到M，内部从0到M-1
@@ -33,6 +64,15 @@ LogStream& operator<<(LogStream& s, std::vector<T>& vec){
     return s;
 }
 
+template<typename T>
+LogStream& operator<<(LogStream& s, std::list<T>& lst){
+    s<<"(lst:";
+    for(auto it = lst.begin();it!=lst.end();it++){
+        s<<*it<<",";
+    }
+    s<<")";
+    return s;
+}
 
 
 //模糊模式：对象数量并不精准契合统计数据

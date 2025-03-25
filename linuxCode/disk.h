@@ -6,6 +6,7 @@
 #include <vector>
 #include <array>
 #include <cmath>
+#include <list>
 
 #include "noncopyable.h"
 #include "bufferSpace.h"
@@ -19,29 +20,34 @@
 #define LOG_ACTIONS LOG_FILE("actions")
 #define LOG_DISKN(x) LOG_FILE("disk"+std::to_string(x))
 #define LOG_ACTIONSN(x) LOG_FILE("actions"+std::to_string(x))
+
+
+
 enum HeadAction{
-    NONE,
-    JUMP,
-    PASS,
-    READ
+    NONE,//只用在磁头的toBeComplete中。
+    START,//只用在HeadPlanner中。作为planner的起始节点。相应参数为AheadRead
+    JUMP,//HeadOperator参数：jumpTo，跳到的位置
+    PASS,//HeadOperator参数：passTimes，连续pass的步数
+    READ//HeadOperator参数：aheadRead，前面已经读过的步数。
 };
 
 struct HeadOperator{
     HeadAction action;
     union{
-        int times;
-        int jumpTo;
+        int aheadRead;//之前的读操作数量。
+        int passTimes;//pass的次数。
+        int jumpTo;//跳到的位置。
     };
 };
 LogStream& operator<<(LogStream& s, HeadOperator& headOperator) {
     if (headOperator.action == JUMP) {
-        s << "[JUMP " << headOperator.jumpTo << "]";
+        s << "[JUMP jumpTo:" << headOperator.jumpTo << "]";
     }
     else if (headOperator.action == PASS) {
-        s << "[PASS " << headOperator.times << "]";
+        s << "[PASS times:" << headOperator.passTimes << "]";
     }
     else if (headOperator.action == READ) {
-        s << "[READ " << headOperator.times << "]";
+        s << "[READ aheadRead:" << headOperator.aheadRead << "]";
     }
     return s;
 }
@@ -72,17 +78,13 @@ public:
     }
     int calTokensCost(HeadOperator headOperator){
         auto action = headOperator.action;
-        auto times = headOperator.times;
         if(action == READ){
-            int tolConsume = 0;
-            for(int i=0;i<times;i++){
-                int tempReadConsum = readConsume;
-                tolConsume += tempReadConsum;
-                tempReadConsum = std::max<int>(16, std::ceil(0.8*readConsume));
-            }
-            return tolConsume;
+            assert(headOperator.aheadRead == getAheadReadTimes(readConsume));
+            int consume = readConsume;
+            readConsume = getNextReadConsume(readConsume);
+            return consume;
         }else if(action == PASS){
-            return times;
+            return headOperator.passTimes;
         }else if(action == JUMP){
             return G;
         }
@@ -125,52 +127,46 @@ public:
             return true;
         }
         if(action == READ){
-            int Toltimes = toBeComplete.times;
-            for(int i=0;i< Toltimes;i++){
-                if(tokensOffset>0 && presentTokens >= tokensOffset){
-                    //如果已经有读开始，但是还未结束
-                    (*completedRead).push_back(headPos);
+            if(tokensOffset>0 && presentTokens >= tokensOffset){
+                //如果已经有读开始，但是还未结束
+                (*completedRead).push_back(headPos);
 
-                    headPos += 1; headPos %= spaceSize;
+                headPos += 1; headPos %= spaceSize;
 
-                    presentTokens -= tokensOffset;
-                    tokensOffset = 0;
-                    toBeComplete.times -= 1;
-                    
-                    readConsume = std::max<int>(16, std::ceil(0.8*readConsume));
-                }else if(readConsume <= presentTokens){
-                    //如果没有读开始，刚开始且能够完成
-                    (*completedRead).push_back(headPos);
+                presentTokens -= tokensOffset;
+                tokensOffset = 0;
+                
+                readConsume = getNextReadConsume(readConsume);
+            }else if(readConsume <= presentTokens){
+                //如果没有读开始，刚开始且能够完成
+                (*completedRead).push_back(headPos);
 
-                    headPos += 1; headPos %= spaceSize;
+                headPos += 1; headPos %= spaceSize;
 
-                    presentTokens -= readConsume;
-                    toBeComplete.times -= 1;
-                    readConsume = std::max<int>(16, std::ceil(0.8*readConsume));
-                }else{
-                    handledOperation->push_back({ READ, i });
-                    return false;//无法跨两步读。
-                    // //如果没有读开始，但是无法完成
-                    // if(i>0){
-                    //     handledOperation->push_back({READ, i});//返回已经开始或完成的操作。
-                    // }
-                    // tokensOffset = readConsume - presentTokens;
-                    // presentTokens = 0;
-                    // return false;
-                }
+                presentTokens -= readConsume;
+                readConsume = getNextReadConsume(readConsume);
+            }else{//无法完成当前读。
+                return false;//无法跨两步读。
+                // //如果没有读开始，但是无法完成
+                // if(i>0){
+                //     handledOperation->push_back({READ, i});//返回已经开始或完成的操作。
+                // }
+                // tokensOffset = readConsume - presentTokens;
+                // presentTokens = 0;
+                // return false;
             }
-            handledOperation->push_back({toBeComplete.action, Toltimes});//全部完成
+            handledOperation->push_back(toBeComplete);//完成该行动。
             toBeComplete = {NONE, 0};
             return true;
         }else if(action == PASS){
             if(presentTokens == 0){
                 return false;
             }
-            if(toBeComplete.times <= presentTokens){
-                headPos += toBeComplete.times; headPos %= spaceSize;
-                handledOperation->push_back({toBeComplete.action, toBeComplete.times});
+            if(toBeComplete.passTimes <= presentTokens){
+                headPos += toBeComplete.passTimes; headPos %= spaceSize;
+                handledOperation->push_back({toBeComplete.action, toBeComplete.passTimes});
 
-                presentTokens -= toBeComplete.times;
+                presentTokens -= toBeComplete.passTimes;
                 toBeComplete = {NONE, 0};
                 readConsume = FIRST_READ_CONSUME;
                 return true;
@@ -178,7 +174,7 @@ public:
                 headPos += presentTokens; headPos %= spaceSize;
                 handledOperation->push_back({PASS, presentTokens});
 
-                toBeComplete.times -= presentTokens;
+                toBeComplete.passTimes -= presentTokens;
                 presentTokens = 0;
                 readConsume = FIRST_READ_CONSUME;
                 return false;
@@ -200,16 +196,14 @@ public:
         }
         return false;
     };
-    //把取消的Read都提取出来。其它操作没有必要提取。READ会对ReqUnit造成影响。
+    //把取消的Read提取出来。其它操作没有必要提取。READ会对ReqUnit造成影响。
     void cancelAction(std::vector<int>* canceledRead) {
         if (this->tokensOffset) {
             this->presentTokens = this->presentTokens - this->tokensOffset;
         }
         int pos = this->headPos;
         if (this->toBeComplete.action = READ) {
-            for (int i = 0; i < toBeComplete.times; i++) {
-                canceledRead->push_back(this->headPos + i);
-            }
+            canceledRead->push_back(this->headPos);
         }
         this->toBeComplete = { NONE, 0 };
     }
@@ -467,573 +461,6 @@ public:
         如果以不放弃每一个对象的方式，且不回读，那么可以简化很多策略。
         每次取十个磁头最靠近的十个请求，规划是否选择这十个请求中的副本。
     */
-};
-
-
-class HeadActionsInfo{
-public:
-    int spaceSize;
-    int tokenCost;
-    int orgHeadPos;
-    int diskId;
-    int nextReadConsume;
-    std::vector<HeadOperator> actions = {};//对应的行动是什么
-    std::vector<int> headPoses = {};//对应的行动会走到哪
-    std::vector<int> finishOnTokens = {};//对应的行动在什么时候结束（tokens）
-    // HeadActionsInfo(int readConsume, int headpos, int spacesize):
-    //     nextReadConsume(readConsume), orgHeadPos(headpos), spaceSize(spacesize){}
-
-    HeadActionsInfo(Disk* disk):
-        nextReadConsume(disk->head.readConsume), 
-        orgHeadPos(disk->head.headPos), 
-        spaceSize(disk->head.spaceSize),
-        tokenCost(G - disk->head.presentTokens),//该回合已经花费的tokens
-        diskId(disk->diskId)
-    {if(disk->head.tokensOffset!=0){
-            throw std::logic_error("don't initialize headActionsInfo by head with action incompleted.");
-    }}//不要用还未完成行动的head来初始化HeadActionsInfo！
-    // 将操作序列附加到现有操作操作序列中，并更新所有操作的累积花费和读操作状态。
-    // @param actions 要附加的操作序列。
-    int getLastHeadPos(){
-        if(headPoses.size() == 0){
-            return orgHeadPos;
-        }else{
-            return headPoses.back();
-        }
-    }
-    int getLastTokenCost() {
-        if (finishOnTokens.size()) {
-            return finishOnTokens.back();
-        }
-        else {
-            return tokenCost;
-        }
-    }
-    
-    void freshActionsInfo(std::vector<HeadOperator> actions){
-        for(int i=0;i<actions.size();i++){
-            auto operation = actions[i];
-            freshActionsInfo(operation);
-        }
-    }
-    void freshActionsInfo(HeadOperator operation){
-        auto action = operation.action;
-        if(action == READ){//对于READ操作，一个一个地加。
-            auto times = operation.times;
-            for(int i=0;i<times;i++){
-                freshTokensOnAction(this->nextReadConsume, false);
-                freshHeadPoses(1, true);
-                this->actions.push_back({READ, 1});
-
-                this->nextReadConsume = std::max<int>(16, std::ceil(0.8 * this->nextReadConsume));
-            }
-        }else if(action == PASS){
-            //PASS不需要细分操作数，因为不需要判断某个单元是否有某个对象在赶往，
-            // 只需要知道某个单元什么时候会被读取即可。
-            freshTokensOnAction(operation.times, true);
-            freshHeadPoses(operation.times, true);
-            this->actions.push_back(operation);
-
-            this->nextReadConsume = FIRST_READ_CONSUME;
-        }else if(action == JUMP){
-            if(operation.jumpTo<0 || operation.jumpTo>=spaceSize){
-                throw std::out_of_range("action JUMP jumps out of range");
-            }
-            freshTokensOnAction(G, false);
-            freshHeadPoses(operation.jumpTo, false);
-            this->actions.push_back(operation);
-
-            this->nextReadConsume = FIRST_READ_CONSUME;
-        }
-        else {
-            throw std::logic_error("action wrong!");
-        }
-        
-    }
-    
-    void freshTokensOnAction(int value, bool divisible) {
-        if (divisible) {
-            this->finishOnTokens.push_back(this->getLastTokenCost() + value);
-        }
-        else {
-            int tolTokens = this->getLastTokenCost();
-            if ((tolTokens + value - 1) / G == tolTokens / G + 1) {//如果操作跨回合了。
-                tolTokens = (tolTokens / G + 1) * G;//跳到回合开始处。
-            }
-            tolTokens += value;
-            this->finishOnTokens.push_back(tolTokens);
-        }
-    }
-    void freshHeadPoses(int value, bool isOffset){
-        if (isOffset) {
-            headPoses.push_back((getLastHeadPos() + value) % spaceSize);
-        }
-        else {
-            headPoses.push_back(value);
-        }
-    }
-    // int getTokenCost(){return tokenCost;}
-    // int getTimeCost(){return timeCost;}
-    // int getNextReadConsume(){return nextReadConsume;}
-    // std::vector<std::pair<HeadAction, int>> getActions(){return actions;}
-};
-
-
-LogStream& operator<<(LogStream& s, HeadActionsInfo& headActionsInfo){
-    s << "\n";
-    s << "diskId:" << headActionsInfo.diskId << " ";
-    s << "tokenCost:" << headActionsInfo.tokenCost << " ";
-    s << "orgHeadPos:" << headActionsInfo.orgHeadPos << " ";
-    s << "nextReadConsume:" << headActionsInfo.nextReadConsume << " ";
-    s << "spaceSize:" << headActionsInfo.spaceSize << "\n";
-    s << "(actions,topos):\n{";
-    for(int i=0;i<headActionsInfo.actions.size();i++){
-        s <<"("<< headActionsInfo.actions[i] << headActionsInfo.headPoses[i]<<")";
-    }
-    s << "}\n";
-    return s;
-}
-
-class DiskInfo{
-    public:
-        Disk* disk;
-        BplusTree<4> reqSpace;
-        std::vector<HeadOperator> handledOperations = {};//作为输出到判题器的参数。
-        std::vector<int> completedRead = {};
-        std::vector<int> canceledRead = {};
-        DiskInfo():disk(nullptr), reqSpace(){
-            LOG_DISK << "create diskInfo";
-        };
-        //行为策略。
-        bool toReqUnit(HeadActionsInfo& actionsInfo, int reqUnit){
-            LOG_ACTIONSN(actionsInfo.diskId) << "plan to reqUnit:" << reqUnit;
-            int distance = disk->getDistance(reqUnit, actionsInfo.getLastHeadPos());//choseRep已经算过了一遍，这里再算一遍？！
-            
-            if(distance){
-                if(distance <= disk->head.presentTokens){
-                    //如果可以直接移动到目标位置。
-                    actionsInfo.freshActionsInfo(HeadOperator{PASS, distance});
-                    return true;//当前时间帧还有可能可以读
-                    //也可以试试能不能连读过去（节省时间），这取决于下面有多少单元，能否节省总开销。
-                }else if(disk->head.presentTokens == G){
-                    //当前还有G个Token，即上一时间步的操作没有延续到当前时间步。可以直接跳过去。
-                    actionsInfo.freshActionsInfo(HeadOperator{JUMP, reqUnit});
-                    return false;//当前时间帧无法读了。
-                }else if(disk->head.presentTokens + G > distance){
-                    //如果当前时间步的令牌数不够跳，且这个时间步+下个时间步能够移动到目标位置，
-                    //那么先向目标位置移动
-                    actionsInfo.freshActionsInfo(HeadOperator{PASS, disk->head.presentTokens});
-                    return false;//当前时间帧无法读了。
-                }else{
-                    //最早也得下两个回合才能到达读位置。
-                    //可以视情况做一些有益的策略。（如移动到下回合更可能有请求的位置。
-                    //也可以不行动。
-                    return false;
-                }
-            }else{
-                return true;//当前就在这个位置。
-            }
-        }
-        //判断是否能够连读。如果能，则连读。
-        void multiRead(HeadActionsInfo& actionsInfo){
-            int times = 0;
-            int reqUnit = actionsInfo.getLastHeadPos();
-            LOG_ACTIONSN(actionsInfo.diskId) << "test multiRead from " << reqUnit;
-            DiskUnit unitInfo = this->disk->getUnitInfo(reqUnit);
-            //如果reqUnit还未被规划，则规划，且查看是否可以连读。
-            Object* obj = sObjectsPtr[unitInfo.objId];
-            while(obj != &deletedObject &&//该处有对象且未被删除
-                        obj->unitReqNum[unitInfo.untId]>0&& //判断是否有请求
-                            (!obj->isPlaned(unitInfo.untId))){//判断是否未被规划
-                LOG_DISK << "hold read on unit "<< 
-                    reqUnit<<" from obj " << unitInfo.objId << " unitOrder " << unitInfo.untId;
-                //持续一回合的plan。commitPlan中会有持续多个回合的plan
-                obj->plan(unitInfo.untId, this->disk->diskId);
-                times ++;
-                actionsInfo.freshActionsInfo({ READ, 1 });
-                if (actionsInfo.getLastTokenCost() > 2 * G) { break; }//超过两回合就退出。
-                reqUnit = (reqUnit+1)%this->disk->spaceSize; //查看下一个位置是否未被规划。
-                unitInfo = this->disk->getUnitInfo(reqUnit);
-                obj = sObjectsPtr[unitInfo.objId];
-            }
-            if (times == 0) {
-                throw std::logic_error("error! times equals 0. this unit should has not been planed! ");
-            }
-        }
-
-        //reqUnit相关
-        bool roundReqUnitToPos(int headPos){
-            if(this->reqSpace.getKeyNum()>0){
-                this->reqSpace.setAnchor(headPos);
-                return true;
-            }else{
-                return false;
-            }
-        }
-        
-        /// @brief 获取下一个key
-        /// @param toNext 是否把锚点移动到下一个key处。
-        /// @return 如果已经没有下一个请求单元，则返回-1，否则返回请求单元的位置
-        int getNextRequestUnit(bool toNext = true){
-            // try{
-            return this->reqSpace.getNextKeyByAnchor(toNext);
-            // }catch(const std::logic_error& e){
-            //     throw;
-            // }
-        }
-
-        /// @brief 获取下一个未被规划的请求单元，并且把锚点移动到该请求单元处。
-        /// @return 如果已经没有下一个未被规划的请求单元，则返回-1，否则返回请求单元的位置
-        int getNextUnplanedReqUnit(){
-            int reqUnit = this->reqSpace.getNextKeyByAnchor(true);
-            if(reqUnit == -1){
-                return reqUnit;
-            }
-            LOG_DISK << "reqUnit:" << reqUnit;
-            auto diskUnit = disk->getUnitInfo(reqUnit);
-            while(sObjectsPtr[diskUnit.objId]->isPlaned(diskUnit.untId)){
-                reqUnit = this->reqSpace.getNextKeyByAnchor(true);
-                if (reqUnit == -1) {
-                    break;
-                }
-                else {
-                    diskUnit = disk->getUnitInfo(reqUnit);
-                }
-            }//直到找到一个还未被规划的unit
-            if (!(reqUnit == -1 || (!sObjectsPtr[diskUnit.objId]->isPlaned(diskUnit.untId)))) {
-                throw std::logic_error("disk unit should have not been planed");
-            }
-            return reqUnit;
-        }
-        bool hasRequestUnit(){
-            if(this->reqSpace.root->keyNum>0){
-                return true;
-            }
-            return false;
-        }
-    };
-
-/// @brief 负责：从请求单元链表中删除已读取的请求单元
-///
-///请求的信息包括：diskInfo中的reqSpace和actionsPlan、object中的planUnit、
-class DiskManager{
-public:
-
-    std::vector<DiskInfo*> diskGroup;
-    std::vector<int> doneRequestIds;
-public:
-    //存储一个活动对象的id索引。方便跟进需要查找的单元信息。
-    DiskManager(){};
-    void addDisk(int spaceSize){
-        LOG_DISK << "add disk, space size:" << spaceSize;
-        DiskInfo* diskInfo = new DiskInfo();
-        LOG_DISK << "create diskInfo over" << spaceSize;
-        diskInfo->disk = new Disk(diskGroup.size(), spaceSize);
-        diskInfo->reqSpace.id = diskGroup.size();
-        LOG_DISK << "create disk over " << spaceSize;
-        diskGroup.push_back(diskInfo);
-    }
-    ~DiskManager(){
-        for(int i=0;i<diskGroup.size();i++){
-            delete diskGroup[i];
-        }
-    }
-    void freshNewReqUnits(const Object& obj, std::vector<int> unitsOrder){
-        bool test = false;
-        for(int r=0;r<REP_NUM;r++){//第几个副本
-            DiskInfo* disk = this->diskGroup[obj.replica[r]];
-            for(int i=0;i<unitsOrder.size();i++){
-                int diskId = obj.replica[r];
-                int unitOrder = unitsOrder[i];
-                diskGroup[diskId]->reqSpace.insert(obj.unitOnDisk[r][unitOrder]);
-                test = true;
-                LOG_BplusTreeN(diskId)<<" insert unit req"<<obj.unitOnDisk[r][unitOrder];
-            }
-        }
-        if(test){
-            LOG_BplusTree << "\n\ninsert unit of obj "<<obj.objId << " to reqSpace";
-            for(int i=0;i<REP_NUM;i++){
-                LOG_BplusTreeN(obj.replica[i]) << "over insert";
-                LOG_BplusTreeN(obj.replica[i]) << *diskGroup[obj.replica[i]]->reqSpace.root;
-                LOG_BplusTreeN(obj.replica[i]) << "\n(num:" << diskGroup[obj.replica[i]]->reqSpace.keyNum << ")";
-
-                LOG_BplusTreeN(obj.replica[i]) << "over insert unit of obj " << obj
-                     <<" tree:" << diskGroup[obj.replica[i]]->reqSpace;
-            }
-        }
-
-        
-    }
-    void freshOvertimeReqUnits(const Object& obj, std::vector<int> unitsOrder){
-        for(int r=0;r<REP_NUM;r++){//第几个副本
-            DiskInfo* disk = this->diskGroup[obj.replica[r]];
-            for(int i=0;i<unitsOrder.size();i++){
-                LOG_DISK << "remove overtime req unit "<< obj.unitOnDisk[r][unitsOrder[i]]<<" of disk "<<obj.replica[r];
-                disk->reqSpace.remove(obj.unitOnDisk[r][unitsOrder[i]]);
-            }
-        }
-    }
-
-    void assignSpace(Object& obj){
-        //首先挑出3块空间够且负载低的磁盘，然后选择存储位置，然后选择存储顺序。原则如下：
-        /*
-            存储位置：同一对象分配的空间尽量连续（方便连读）。
-            存储顺序：三个副本尽量采用不同的存储顺序。
-        */
-        LOG_DISK << "using strategy max free space size first.";
-        int* diskSort = (int*)malloc(sizeof(int)*diskGroup.size());
-        for(int i=0;i<diskGroup.size();i++){
-            diskSort[i] = i;
-        }
-        LOG_DISK << "sort disk by free space size";
-        std::sort<int*>(diskSort, diskSort+diskGroup.size(), [=](int a, int b){
-            return (diskGroup[a]->disk->getFreeSpaceSize() > diskGroup[b]->disk->getFreeSpaceSize());
-        });
-        LOG_DISK << "assign space to disk:"<<diskSort[0]<<","<<diskSort[1]<<","<<diskSort[2];
-        for(int i=0;i<REP_NUM;i++){
-            diskGroup[diskSort[i]]->disk->assignSpace(obj, static_cast<UnitOrder>(i), obj.unitOnDisk[i], false, obj.tag);
-            obj.replica[i] = diskSort[i];
-        }//分配空间最大的磁盘。
-
-        free(diskSort);
-        
-    }
-
-    /// @brief chose a disk to read unit reqUnit
-    /// @param reqUnit unit position in disk
-    /// @return the disk get this unit
-    int choseRep(int objId, int untId){
-        //离谁进就选谁。还有一个简单策略是谁目前的时间片规划得少就选谁。
-        //但是这需要考虑到在磁头路径中间插入请求单元
-        //因此要在actionsInfo中记录所有计划完成的请求单元（其实headpos已经记录了）
-        //并且需要从头遍历路径来选择一个合适的位置插入这个请求单元
-        int minDistDiskId = -1;
-        int dist = -1;
-
-        Object* obj = sObjectsPtr[objId];
-        for(int i=0;i<REP_NUM;i++){
-            int diskId = obj->replica[i];
-            int untPos = obj->unitOnDisk[i][untId];
-            int headpos = diskGroup[diskId]->disk->head.headPos;
-            int tempDisk = diskGroup[diskId]->disk->getDistance(untPos, headpos);
-            
-            if(dist<0){
-                dist = tempDisk;
-                minDistDiskId = diskId;
-            }else if(dist>tempDisk){
-                dist = tempDisk;
-                minDistDiskId = diskId;
-            }
-        }
-
-        return minDistDiskId;
-    }
-    //choseReq如果每次只规划一个单元，那么就没有依据给连读判断。
-    void planUnitsRead(){
-        LOG_DISK << "timestamp "<< Watch::getTime()<<" plan:";
-        std::vector<HeadActionsInfo*> vHeads;
-        DiskInfo* diskInfo;
-        Disk* disk;
-        for(int i=0;i<this->diskGroup.size();i++){
-            diskInfo = this->diskGroup[i];
-            disk = diskInfo->disk;
-            if(disk->head.completeAction(&diskInfo->handledOperations, &diskInfo->completedRead)){
-                LOG_DISK << "disk "<< disk->diskId<<" completeAction";
-                if(diskInfo->roundReqUnitToPos(disk->head.headPos)){
-                    LOG_ACTIONSN(disk->diskId) << "round disk to head pos "<<disk->head.headPos
-                            <<", present anchor pos "<<
-                        diskInfo->reqSpace.anchor.startKey
-                        <<diskInfo->reqSpace.getNextKeyByAnchor(false);
-                    vHeads.push_back(new HeadActionsInfo(disk));
-                }
-                else {
-                    LOG_ACTIONSN(i) << "disk "<<i<<" has no reqUnit";
-                }
-            }
-        }
-        auto lambdaCompare = [](HeadActionsInfo*& a, HeadActionsInfo*& b){
-                return a->getLastTokenCost() < b->getLastTokenCost();//谁当前cost最多就先规划谁。
-        };
-        std::sort(vHeads.begin(), vHeads.end(), lambdaCompare);
-        while(vHeads.size() && vHeads.back()->getLastTokenCost() <G) {//规划一个回合。
-            auto vHead = vHeads.back();
-            diskInfo = this->diskGroup[vHead->diskId];
-            disk = diskInfo->disk;
-            //LOG_DISK << "present head:" << *vHead;
-            int unitPos = diskInfo->getNextUnplanedReqUnit();
-            LOG_DISK << "present head:" << *vHead;
-            LOG_DISK << "next unit pos:" << unitPos;
-            if(unitPos>=0){
-                auto unitInfo = disk->getUnitInfo(unitPos);
-                LOG_ACTIONSN(vHead->diskId) << "plan disk to unplaned reqUnit, [pos(" 
-                    << unitPos << "):obj(" << unitInfo.objId << "):unt(" << unitInfo.untId << ")";
-                LOG_ACTIONSN(vHead->diskId) << "obj info:" << *sObjectsPtr[unitInfo.objId];
-                if (diskInfo->toReqUnit(*vHead, unitPos)) {//只有当前时间帧能到达目标位置才能在目标位置开始读。
-                    diskInfo->multiRead(*vHead);
-                }
-                else {//当前时间帧无法到达下一个目标位置。确认当前规划的所有请求。
-
-                }
-                LOG_DISK << "head plan:" << *vHead;
-                //如果规划完成则将其删除。
-                if(vHead->getLastTokenCost() >=G){
-                    LOG_ACTIONSN(vHead->diskId) << "commit plan for:" << *vHead;
-                    commitPlan(vHead);
-                    vHeads.pop_back();//移除最后一个，不会改变顺序
-                }
-            }else{//如果请求已经转完一圈了就停止。
-                LOG_ACTIONSN(vHead->diskId) << "commit plan for:" << *vHead;
-                commitPlan(vHead);
-                vHeads.pop_back();//不会改变顺序
-            }
-            std::sort(vHeads.begin(), vHeads.end(), lambdaCompare);
-        }
-        LOG_DISK << "plan over";
-    }
-
-    //在请求单元链表中删除obj的所有第unitOrder个unit的副本。
-    void removeObjectReqUnit(const Object& obj, int unitOrder){
-        for(int i=0;i<REP_NUM;i++){
-            int diskId = obj.replica[i];
-            int unitPos = obj.unitOnDisk[i][unitOrder];
-            LOG_BplusTreeN(diskId) << "\n\nremove obj " << obj.objId << " done request unit "<<unitPos <<" of disk " <<diskId;
-            diskGroup[diskId]->reqSpace.remove(unitPos);
-        }
-    }
-    //执行diskId的已有规划
-    //将实际开始执行的行动记录到diskInfo->handledOperations中。
-    //将实际执行完成的请求记录到doneRequestIds中。
-    void commitPlan(HeadActionsInfo* headActions){//std::vector<HeadOperator> actionsPlan){
-        std::vector<HeadOperator>& actionsPlan = headActions->actions;
-        int diskId = headActions->diskId;
-        if(actionsPlan.size() == 0){
-            return;
-        }
-        if (diskId == -1) {
-            throw std::logic_error("a headActions should only be used once");
-        }
-        DiskInfo* diskInfo = this->diskGroup[diskId];
-        Disk* disk = diskInfo->disk;
-        //首先completeAction，完成上一次没有完成的持续行动。
-        //如果行动在这一回合还是没有完成，那么就接收两个参数。
-        //应当在之前先对所有disk试试completeAction。如果返回false，那么此时的presentTokens肯定为0
-        LOG_DISK << "test commit plan for disk "<< diskId <<"\nplan:"<<actionsPlan;
-        if(disk->head.completeAction(&diskInfo->handledOperations, &diskInfo->completedRead)){
-            int planNum = actionsPlan.size();
-            for(int i=0;i<planNum;i++){
-                LOG_DISK << "loop continue";
-                auto action = actionsPlan[i];
-                if(!disk->head.beginAction(action)){
-                    LOG_DISK << "begin fail, some actions to be completed";
-                    break;//要么是之前行动没有做完，要么是输入参数出了问题。
-                }else{
-                    if(action.action == READ){
-                        int actionFinishStep = headActions->finishOnTokens[i]/G;
-                        int pos;
-                        if (i == 0) {
-                            pos = headActions->orgHeadPos;
-                        }
-                        else {
-                            pos = headActions->headPoses[i - 1];
-                        }
-                        
-                        auto unitInfo = disk->getUnitInfo(pos);
-                        sObjectsPtr[unitInfo.objId]->plan(unitInfo.untId, diskId, actionFinishStep);
-                    }
-                    LOG_DISK << "disk "<<disk->diskId<<" begin action:"<<action;
-                    if(!disk->head.completeAction(&diskInfo->handledOperations, &diskInfo->completedRead)){
-                        break;//剩下的时间片不足以完成这个行动
-                    }
-                    LOG_DISK << "disk "<<disk->diskId<<" complete action:"<<action;
-                    //剩下的时间片完成了这个行动。继续迭代以喂入下一个活动。
-                }
-            }
-        }
-        headActions->diskId = -1;
-    }
-    void freshDoneRequestIds(Disk* disk, std::vector<int> completedRead){
-        for(int i=0;i<completedRead.size();i++){
-            int readUnit = completedRead[i];
-            auto unitInfo = disk->getUnitInfo(readUnit);
-            Object* obj = sObjectsPtr[unitInfo.objId];
-            //如果这回合刚读完之前的一个行动，但是这回合对应的对象被删除了，那就无效了。
-            if(obj != &deletedObject){
-                for (int i = 0; i < REP_NUM;i++) {
-                    int diskId = obj->replica[i];
-                    LOG_BplusTreeN(diskId) << "on read " << readUnit << " remove unit of " << *obj;
-                }
-                obj->commitUnit(unitInfo.untId, &doneRequestIds);
-                this->removeObjectReqUnit(*obj, unitInfo.untId);
-            }
-        }
-    }
-    //返回该回合对应磁盘磁头执行的所有动作
-    std::vector<HeadOperator> getHandledOperations(int diskId){
-        return std::move(diskGroup[diskId]->handledOperations);
-    }
-    //返回该回合完成的所有请求
-    std::vector<int> getDoneRequests(){
-        for(int i=0;i<diskGroup.size();i++){
-            LOG_ACTIONSN(i) << "complete read" << diskGroup[i]->completedRead;
-            if (diskGroup[i]->completedRead.size()) {
-                LOG_BplusTree << "disk " << i << " " << diskGroup[i]->disk->diskId <<
-                    " complete read " << diskGroup[i]->completedRead;
-                
-                freshDoneRequestIds(diskGroup[i]->disk, std::move(diskGroup[i]->completedRead));
-            }
-        }
-        return std::move(doneRequestIds);
-    }
-
-    void freeSpace(Object& obj){
-        LOG_DISK << "free space of obj "<<obj.objId;
-        //如果存在请求则删除该请求。
-        for (int j = 0; j < obj.size; j++) {
-            if (obj.unitReqNum[j] > 0 && obj.isPlaned(j)) {
-                //该单元已被plan，但是将被删除。很可能造成出错，所以如果存在这种情况，应该无视某些读完成的消息？
-                // 但是如果后面又有东西在相应规划期内读它，又会造成两个磁头重复读一个磁盘。
-                //要不试试取消该磁头的当前读操作？但是又得取消该磁头读取其它obj的操作，而其它obj的某个plan的time可能已经被设置到了某个位置。
-                //diskGroup[diskId]->ignoreRead.push_back(obj.unitOnDisk[i][j]);
-                
-                //取消当前磁头的操作
-                int planDiskId = obj.planReqUnit[j];//找到规划该单元的磁头
-                LOG_DISKN(planDiskId) << "when delete obj " << obj << " ,obj has been planed";
-                Disk* disk = diskGroup[planDiskId]->disk;
-                std::vector<int> canceledRead;
-                disk->head.cancelAction(&canceledRead);
-                LOG_DISKN(planDiskId) << "get canceled read:" << canceledRead;
-                for (int c = 0; c < canceledRead.size(); c++) {
-                    auto unitInfo = disk->getUnitInfo(canceledRead[c]);
-                    auto objPtr = sObjectsPtr[unitInfo.objId];
-                    objPtr->clearPlaned(unitInfo.untId);
-                    LOG_DISKN(planDiskId) << "fresh obj " << *objPtr << " ,obj has been planed";
-                }
-            }
-            if (obj.unitReqNum[j] > 0) {
-                this->removeObjectReqUnit(obj, j);
-            }
-        }
-        for (int j = 0; j < obj.size; j++) {
-            if (obj.unitReqNum[j] > 0 && obj.isPlaned(j)) {
-                throw std::logic_error("obj has planed unit!!please delete it first!!");
-            }
-        }
-        for(int i=0;i<REP_NUM;i++){
-            int diskId = obj.replica[i];
-            Disk* disk = diskGroup[diskId]->disk;
-            LOG_DISK << "release space in disk "<<diskId;
-            LOG_LINKEDSPACEN(diskId) << "free space for obj:" << obj;
-            
-            disk->releaseSpace(obj.unitOnDisk[i], obj.size, obj.tag);
-        }
-    }
-    
-    void freshTokens(){
-        for(int i=0;i<diskGroup.size();i++){
-            diskGroup[i]->disk->head.freshTokens();
-        }
-    }
-
 };
 
 #endif

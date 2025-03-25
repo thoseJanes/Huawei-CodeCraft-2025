@@ -40,7 +40,7 @@ int main()
 {
     //LogFileManager::setLogFilePath(".\\log");
 
-    //FILE* originalStdin = freopen("E:\\work\\study\\affair_AfterUndergraduate\\competitions\\2025huawei\\data\\sample_practice.in", "r", stdin);
+    FILE* originalStdin = freopen("E:\\work\\study\\affair_AfterUndergraduate\\competitions\\2025huawei\\data\\sample_practice.in", "r", stdin);
     
     LOG_INIT << "get global params"; 
     scanf("%d%d%d%d%d", &T, &M, &N, &V, &G);
@@ -78,7 +78,8 @@ int main()
         worker.correctWatch();
         //logTimeStamp(logFiles);
         worker.freshDiskTokens();
-        worker.clearOvertimeReq();
+        worker.freshObjectScore();//必须在clearOvertimeReq之前。
+        worker.clearOvertimeReqAndFreshPhaseTwoReq();//考虑了请求超时可能有单元被取消。
 
         worker.processDelete();
         worker.processWrite();

@@ -7,7 +7,7 @@
 #include <stack>
 #include <exception>
 //#include "tools/LogT"
-#include "Logger.h"
+#include "LogTool.h"
 #define LOG_BplusTreeN(x) LOG_FILE("BplusTree"+std::to_string(x))
 #define LOG_BplusTreeInfoN(x) LOG_FILE("BplusTreeInfo"+std::to_string(x))
 #define LOG_BplusTree LOG_FILE("BplusTree")

@@ -58,7 +58,7 @@ void AppendFile::flush()
 size_t AppendFile::write(const char* logline, size_t len)
 {
   // fwrite_unlocked on linux， _fwrite_nolock on windows
-  return ::fwrite_unlocked(logline, 1, len, fp_);
+  return ::_fwrite_nolock(logline, 1, len, fp_);
 }
 
 
@@ -158,7 +158,7 @@ string TimeRoller::generateFileName()
   char timebuf[32];
   struct tm tm;
 
-  gmtime_r(&judgeTime_, &tm);//linux系统上为gmtime_r(&judgeTime_, &tm),win为gmtime_s(&tm, &judgeTime_);
+  gmtime_s(&tm, &judgeTime_);//linux系统上为gmtime_r(&judgeTime_, &tm),win为gmtime_s(&tm, &judgeTime_);
   strftime(timebuf, sizeof timebuf, ".%Y%m%d-%H%M%S.", &tm);
   filename += timebuf;
   filename += ".log";

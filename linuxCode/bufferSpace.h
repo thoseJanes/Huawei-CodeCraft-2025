@@ -2,7 +2,7 @@
 #include <stdexcept>
 #include <vector>
 #include "noncopyable.h"
-#include "Logger.h"
+#include "LogTool.h"
 
 
 #define LOG_DISK LOG_FILE("disk")
