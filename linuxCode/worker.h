@@ -259,6 +259,11 @@ public:
         }
         
         //规划读取过程。
+        //前期规划————（受planed制约）
+        //后期优化算子————
+        //跳移拼接算子：把跳的action处分开，然后拼接。
+        //对象变副本算子：把对象副本放到规划少的磁头去读
+        //单元变副本算子：把单元副本放到规划少的磁头去读
         diskManagessssssssr.planObjectsRead();
         
         //输出读取过程。
@@ -283,7 +288,9 @@ public:
     
         fflush(stdout);
     }
-
+    const DiskManager* getDiskManager(){
+        return &diskManager;
+    }
     void checkDisk(Disk disk);//更新disk的信息
     ~Worker(){
         free(actionBuffer);

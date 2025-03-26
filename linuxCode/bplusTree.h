@@ -482,10 +482,11 @@ public:
 
 template<int SIZE>
 class BplusTree {
-public:
     typedef BplusNode<SIZE> Node;
     typedef BplusLeafNode<SIZE> LeafNode;
     typedef BplusInnerNode<SIZE> InnerNode;
+private:
+    friend LogStream& operator<<(LogStream& s, const BplusTree<SIZE>& v);
     struct Anchor {
         int step = 0;
         int startKey = 0;
@@ -502,7 +503,6 @@ public:
     LeafNode* head = nullptr;
     Anchor anchor;
     int keyNum;
-    
     //head是节点粒度。anchor是key粒度。
 
 public:
@@ -698,6 +698,7 @@ public:
     }
 
     int getKeyNum(){return keyNum;}
+    const Anchor& getAnchor(){return this->anchor;}
     //设置Anchor指向的key（如果不存在则指向前一个）
     void setAnchor(int key, bool setHead = false) {
         if (head == nullptr) {

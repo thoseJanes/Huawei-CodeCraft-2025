@@ -36,6 +36,14 @@ void addLogFiles(std::vector<std::pair<std::string, int>> logFiles) {
     }
 }
 
+void test_numericalOverflowTest(){
+    long int value = G*T*2;
+    int shortValue = G*T*2;
+    if(value != shortValue){
+        throw std::overflow_error("G*T overflow! Affect headPlanner timeTokens calculation");
+    }
+}
+
 int main()
 {
     //LogFileManager::setLogFilePath(".\\log");
@@ -45,6 +53,7 @@ int main()
     LOG_INIT << "get global params"; 
     scanf("%d%d%d%d%d", &T, &M, &N, &V, &G);
     LOG_INIT <<"T:"<<T<<", M:"<<M<<", N:"<<N<<", V:"<<V<<", G:"<<G<<"\n";
+    test_numericalOverflowTest();
     Worker worker;
     LOG_INIT <<"get statistics";
     
@@ -80,6 +89,16 @@ int main()
         worker.freshDiskTokens();
         worker.freshObjectScore();//必须在clearOvertimeReq之前。
         worker.clearOvertimeReqAndFreshPhaseTwoReq();//考虑了请求超时可能有单元被取消。
+
+        for(int i=0;i<requestedObjects.size();i++){
+            auto obj = requestedObjects[i];
+            obj->test_validRequestsTest();
+        }
+        for(int i=0;i<N;i++){
+            auto manager = worker.getDiskManager();
+            auto planner = manager->getPlanner(i);
+            planner->test_syncWithHeadTest();
+        }
 
         worker.processDelete();
         worker.processWrite();

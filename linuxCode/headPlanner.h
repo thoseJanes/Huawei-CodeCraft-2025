@@ -16,17 +16,19 @@ inline LogStream& operator<<(LogStream& s, ActionNode& actionNode){
     return s;
 }
 
-class HeadPlanner{
+class HeadPlanner{//全局plan，其中的tokens为全局tokens。
 private:
     friend LogStream& operator<<(LogStream& s, HeadPlanner& headPlanner);
     int spaceSize;
     Disk* disk;//保持对disk的引用。
+    //应该存入绝对tokens数。
+    std::map<int, std::pair<std::list<ActionNode>::iterator, HeadPlanner*>> readBranches = {};
+
+    //分支行动。分别为：增加读的位置/创建分支的位置/分支策略。
     int diskId;
     //三元组<HeadOperator, int, int>:磁头操作/操作结束位置/操作结束时间。
     std::list<ActionNode> actionNodes = {};//第零个是起始node。
-
-    //分支行动。分别为：增加读的位置/创建分支的位置/分支策略。
-    std::map<int, std::pair<std::list<ActionNode>::iterator, HeadPlanner*>> readBranches = {};
+    
 
     // HeadPlanner(int readConsume, int headpos, int spacesize):
     //     nextReadConsume(readConsume), orgHeadPos(headpos), spaceSize(spacesize){}
@@ -42,6 +44,7 @@ public:
         actionNodes.push_back({{START, getAheadReadTimes(disk->head.readConsume)}, 
                                 disk->head.headPos, 
                                 G - disk->head.presentTokens});
+        assert(G - disk->head.presentTokens == 0);
     }
     //用一个actionNode来创建分支。
     HeadPlanner(Disk* disk, const ActionNode& actionNode):
@@ -69,7 +72,10 @@ public:
     const ActionNode& getLastActionNode(){
         return actionNodes.back();
     }
-
+    const std::list<ActionNode>& getActionNodes(){
+        return this->actionNodes;
+    }
+    const int& getDiskId(){return this->diskId;}
     void appendActions(const std::vector<HeadOperator>& actions){
         for(int i=0;i<actions.size();i++){
             auto operation = actions[i];
@@ -91,7 +97,12 @@ public:
         }
         return aheadRead;
     }
+    
+    //单纯地加入一个行动，并且计算这个行动的新位置、新代价。
     void appendAction(const HeadOperator& operation, bool ignoreAheadRead = false){
+        if(this->readBranches.size()){
+            std::logic_error("should not append when has branch");
+        }
         auto action = operation.action;
         if(action == READ){//对于READ操作
             int aheadRead = getAheadReadAfter(getLastActionNode());
@@ -117,8 +128,11 @@ public:
         }
         
     }
-    //行为策略。
+    //该函数具有规划的性质，会判断如何到达reqUnit
     void appendMoveTo(int reqUnit){
+        if(this->readBranches.size()){
+            std::logic_error("should not append when has branch");
+        }
         LOG_ACTIONSN(this->diskId) << "plan to reqUnit:" << reqUnit;
         int distance = disk->getDistance(reqUnit, this->getLastActionNode().endPos);//choseRep已经算过了一遍，这里再算一遍？！
         
@@ -144,7 +158,8 @@ public:
         }
     }
 
-    void insertReadAsBranch(int unitPos, int weight){
+    //规划性质：插入读操作，策略为选择最近插入位置。
+    void insertReadAsBranch(int unitPos, int* getReadOverTokens, int* getScoreLoss){
         auto aftIt = this->actionNodes.begin();
         int pstDist = getDistance(unitPos, (*aftIt).endPos);
         if(this->actionNodes.size()>1){
@@ -164,6 +179,7 @@ public:
         readBranches.insert({unitPos, {aftIt, branch}});
         branch->appendMoveTo(unitPos);
         branch->appendAction({READ, -1});
+        *getReadOverTokens = branch->getLastActionNode().endTokens;
         aftIt ++;
         auto nextAction = (*aftIt).action.action;
         if(aftIt != this->actionNodes.end()){
@@ -173,18 +189,30 @@ public:
             }else if(nextAction==READ){
                 //如果是READ，那么上一个endPos距离unitPos最近且为下一个位置减1,那么上一个endPos就是uniPos。
                 assert(branch->actionNodes.front().endPos==unitPos);
-                //但是它既然停在了上一个位置，又没有读。就很奇怪了。
+                //但是它既然停在了上一个位置，又没有读。就很奇怪了。不读为什么要停在那。
                 throw std::logic_error("strange!!!");
             }//如果是JUMP，直接appendAction即可。
         }
-        //如果不是PASS，就是READ或者JUMP。如果是READ，就和当前放入的READ重合了。
+        
+        std::vector<Object*> relatedObjects = {};
         while(aftIt != this->actionNodes.end()){
             branch->appendAction((*aftIt).action, true);
+            const ActionNode& newNode = branch->getLastActionNode();
+            if(getScoreLoss != nullptr && newNode.action.action == READ){
+                auto unitInfo = disk->getUnitInfo(newNode.endPos-1);
+                Object* obj = sObjectsPtr[unitInfo.objId];
+                obj->virBranchPlan(unitInfo.untId, newNode.endTokens/G, false);
+                relatedObjects.push_back(obj);
+            }
         }
-        
-        //向后移动看看能不能改进总价值。
-
+        if(getScoreLoss != nullptr){
+            for(int i=0;i<relatedObjects.size();i++){
+                *getScoreLoss += relatedObjects[i]->getScoreLoss();
+            }
+        }
+        //向后移动看看能不能改进总价值?
     }
+    //用分支修改主干
     void mergeReadBranch(int unitPos){
         auto branchInfo = this->readBranches.at(unitPos);
         actionNodes.splice(branchInfo.first, branchInfo.second->actionNodes,
@@ -198,12 +226,19 @@ public:
         this->readBranches = std::move(branchInfo.second->readBranches);//把branch的分支移动到当前。
         delete branchInfo.second;
     }
+    //删除分支
     void dropReadBranch(int unitPos){
         auto branchInfo = this->readBranches.at(unitPos);
         this->readBranches.erase(unitPos);
         delete branchInfo.second;
     }
 
+    void iteratorToNextRead(std::list<ActionNode>::iterator& it){
+        it ++;
+        while((*it).action.action != READ){
+            it ++;
+        }
+    }
 
     int getDistance(int target, int from){
         return (target - from + spaceSize)%spaceSize;
@@ -214,6 +249,12 @@ public:
         int newCost = calNewTokensCost(lastNode.endTokens, costValue, divisible);
         int newPos = calNewHeadPos(lastNode.endPos, posValue, isOffset);
         actionNodes.push_back({operation, newPos, newCost});
+    }
+    
+    void test_syncWithHeadTest() const {
+        if(this->actionNodes.front().endPos != this->disk->head.headPos){
+            std::logic_error("the planner status not sync with head!!!");
+        }
     }
 
     int calNewTokensCost(int lastTokenCost, int value, bool divisible) {
@@ -251,6 +292,11 @@ public:
         auto lastIt = std::next(this->actionNodes.begin(), pumpSize);
         this->actionNodes.front().endPos = (*lastIt).endPos;
         this->actionNodes.front().endTokens = (*lastIt).endTokens;
+        if((*lastIt).action.action==READ){
+            this->actionNodes.front().action.aheadRead = (*lastIt).action.aheadRead;
+        }else{
+            this->actionNodes.front().action.aheadRead = 0;
+        }
         lastIt++;
         recLst.splice(recLst.end(), this->actionNodes, 
             std::next(this->actionNodes.begin(), 1), lastIt);
