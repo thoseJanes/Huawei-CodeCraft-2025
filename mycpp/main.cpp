@@ -92,9 +92,11 @@ void write_action()
         // 分配存储位置
         std::unordered_set<int> st;//记录已经分配磁盘的位置
         for (int j = 1; j <= REP_NUM; j++) {
+            int cur_rand = rand() % N + 1;
             // 查询是否有充足的空间
             for(int k = 1; k <= N; k++) {
                 //int cur_disk = (id + k + j) % N + 1; // id顺序分配
+                //int cur_disk = (cur_rand + k + j) % N + 1; // 随机分配 效果很差
                 int cur_disk = (tag + k + j) % N + 1; // tag顺序分配 -----有用-------
                 if (st.find(cur_disk) != st.end()) {
                     continue;
@@ -153,49 +155,58 @@ void read_action()
         object[object_id].request_list.push_front(request_id);
         request[request_id].is_done = false;
         request[request_id].start_time = timestamp;
+
+        object[object_id].updateReqNum();
+        //记录请求磁盘位置
+        for(int j = 1;j<=REP_NUM;++j){
+            for(int k = 1;k<=object[object_id].size;++k){
+                disk[object[object_id].replica[j]].requestUnit.insert(object[object_id].unit[j][k]);
+            }
+        }
     }
 
     std::unordered_set<int> done_request;
 
     for (int i = 1; i <= N; i++) {
         //遍历硬盘
-        if(disk[i].reqID==-1||request[disk[i].reqID].is_done){//如果硬盘上没有请求或者请求已经完成,分配请求
-            //--------------------------------
-            // 从请求队列中找到一个请求
-            disk[i].reqID = -1;//防错
+        // if(disk[i].reqID==-1||request[disk[i].reqID].is_done){//如果硬盘上没有请求或者请求已经完成,分配请求
+        //     //--------------------------------
+        //     // 从请求队列中找到一个请求
+        //     disk[i].reqID = -1;//防错
 
-            if (request_list.size() == 0) {//请求队列为空
-                printf("#\n");
-                continue;
-            }
-            int cnt_req = 0;//计数遍历的请求数 我们只允许前100个请求
-            for(auto it = request_list.begin(); it != request_list.end(); it++){
-                cnt_req++;
-                if(cnt_req > 100){
-                    break;
-                }
-                // 请求的物体的某个副本在当前磁盘上就分配给磁盘
-                int temp_obj_id = request[*it].object_id;
-                for(int j = 1; j <= REP_NUM; j++){
-                    if(object[temp_obj_id].replica[j] == i){
-                        disk[i].reqID = *it;
-                        disk[i].replica_id = j;
-                        request_list.erase(it);
-                        break;
-                    }
-                }
-                if(disk[i].reqID!=-1){
-                    break;
-                }
-            }
-        }
+        //     if (request_list.size() == 0) {//请求队列为空
+        //         printf("#\n");
+        //         continue;
+        //     }
+        //     int cnt_req = 0;//计数遍历的请求数 我们只允许前100个请求
+        //     for(auto it = request_list.begin(); it != request_list.end(); it++){
+        //         cnt_req++;
+        //         if(cnt_req > 100){
+        //             break;
+        //         }
+        //         // 请求的物体的某个副本在当前磁盘上就分配给磁盘
+        //         int temp_obj_id = request[*it].object_id;
+        //         for(int j = 1; j <= REP_NUM; j++){
+        //             if(object[temp_obj_id].replica[j] == i){
+        //                 disk[i].reqID = *it;
+        //                 disk[i].replica_id = j;
+        //                 request_list.erase(it);
+        //                 break;
+        //             }
+        //         }
+        //         if(disk[i].reqID!=-1){
+        //             break;
+        //         }
+        //     }
+        // }
 
-        if(disk[i].reqID==-1){
-            printf("#\n");
-            continue;
-        }
+        // if(disk[i].reqID==-1){
+        //     printf("#\n");
+        //     continue;
+        // }
 
-        disk[i].processRequest(request[disk[i].reqID], object[request[disk[i].reqID].object_id],done_request);
+        // disk[i].processRequest(request[disk[i].reqID], object[request[disk[i].reqID].object_id],done_request);
+        disk[i].process(done_request);
 
     }
 

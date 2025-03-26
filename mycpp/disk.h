@@ -10,6 +10,8 @@
 # include <string>
 # include <unordered_set>
 # include "global_info.h"
+# include <set>
+# include <algorithm>
 
 class Disk {
 public:
@@ -20,6 +22,17 @@ public:
                             for(int i = 1; i < _info.tagSize.size(); i++){
                                 tagBegins[i] = tagBegins[i-1] + static_cast<int>(_info.tagSize[i-1]*step);
                             }
+
+                            //初始化jumplenth
+                            from_jump_to_readLen = 0;
+                            int tempG = maxG;
+                            int cost = 64;
+                            while(tempG>=cost){
+                                from_jump_to_readLen++;
+                                tempG -= cost;
+                                cost = std::max(16, int(ceil(cost*0.8)));
+                            }
+                            
                         }
 
     void do_object_delete(const std::vector<int>& object_unit)
@@ -77,8 +90,8 @@ public:
         // }
 
         for (int i = 1; i < unit.size(); i++) {
-            int shift_pos = (pos + i + maxG/16) % V + 1;  //遍历找空位塞入， 从pos开始找， 这里纯调参
-            //int shift_pos = (tagBegins[object[object_id].tag]+i) % V + 1;  //遍历找空位塞入， 从tagpos开始找
+            //int shift_pos = (pos + i + maxG/16) % V + 1;  //遍历找空位塞入， 从pos开始找， 这里纯调参
+            int shift_pos = (tagBegins[object[object_id].tag]+i) % V + 1;  //遍历找空位塞入， 从tagpos开始找
             
             if (unit[shift_pos] == 0) {
                 unit[shift_pos] = object_id;
@@ -105,8 +118,29 @@ public:
 
     }
 
+    int get_req_num(int a){
+        int cur_obj_id = unit[a];
+        if(cur_obj_id != 0){//如果有数据
+            char cur_obj_pos = obj_pos[a];
+            //清0表示此单位已经读取
+            return object[cur_obj_id].reqNum_[cur_obj_pos];
+        }
+        return 0;
+    }
+
     void fresh(){
         curG = maxG;
+        
+        //保留前5个请求
+        std::vector<int> tmp(requestUnit.begin(), requestUnit.end());
+        //取最大的5个
+        std::sort(tmp.begin(), tmp.end(), [&](int a, int b){
+            return get_req_num(a)>get_req_num(b);
+        });
+        requestUnit.clear();
+        for(int i = 0; i < 5 && i < tmp.size(); i++){
+            requestUnit.insert(tmp[i]);
+        }
     }
 
     void processRequest(Request& req, Object& obj, std::unordered_set<int>& done_request){
@@ -127,6 +161,8 @@ public:
                 int cur_obj_id = unit[pos];
                 if(cur_obj_id != 0){//如果有数据
                     char cur_obj_pos = obj_pos[pos];
+                    //清0表示此单位已经读取
+                    object[cur_obj_id].reqNum_[cur_obj_pos] = 0;
 
                     for(auto it = object[cur_obj_id].request_list.begin(); it !=  object[cur_obj_id].request_list.end(); it++){
                         bool is_done = request[*it].readData(cur_obj_pos, object[cur_obj_id]);
@@ -163,6 +199,132 @@ public:
         }
     }
 
+    void process(std::unordered_set<int>& done_request){
+        //从 requestUnit 中找到请求的对象 只看两步两种方法
+        // 1. 连读两次
+        // 计算收益
+        int orig_pos = pos;
+        int pre_action = preAction;
+        int pre_pretocken = preTocken;
+        int pre_G = curG;
+        
+        int revenue = 0;
+        int cost = preAction == 2?  std::max(16, int(ceil(preTocken*0.8))):64;
+        curG = maxG;
+        while(curG>=cost){
+            // 遍历该文件所有请求，设置已读该处
+            int cur_obj_id = unit[pos];
+            if(cur_obj_id != 0){//如果有数据
+                char cur_obj_pos = obj_pos[pos];
+                //记录收益
+                revenue += object[cur_obj_id].reqNum_[cur_obj_pos];
+            }
+
+            pos = pos%V + 1;
+            curG -= cost;
+
+            preTocken = cost;
+            preAction = 2;
+
+            cost = std::max(16, int(ceil(preTocken*0.8)));//更新cost
+        }
+        //再来一次
+        curG = maxG;
+        while(curG>=cost){
+            // 遍历该文件所有请求，设置已读该处
+            int cur_obj_id = unit[pos];
+            if(cur_obj_id != 0){//如果有数据
+                char cur_obj_pos = obj_pos[pos];
+                //记录收益
+                revenue += object[cur_obj_id].reqNum_[cur_obj_pos];
+            }
+
+            pos = pos%V + 1;
+            curG -= cost;
+
+            preTocken = cost;
+            preAction = 2;
+            cost = std::max(16, int(ceil(preTocken*0.8)));//更新cost
+        }
+
+        //还原现场
+        pos = orig_pos;
+        preAction = pre_action;
+        preTocken = pre_pretocken;
+        curG = pre_G;
+
+        // 2. 跳一次读一次
+        int cur_revenue_max = 0;
+        int cur_revenue_max_pos = 0;
+        for(auto setPos:requestUnit){
+            int cur_revenue = computeSumpfJumpLenFromPos(setPos);
+            if(cur_revenue>cur_revenue_max){
+                cur_revenue_max = cur_revenue;
+                cur_revenue_max_pos = setPos;
+            }
+        }
+        //比较两种方法的收益
+        if(cur_revenue_max>revenue){
+            jump(cur_revenue_max_pos);
+        }else{
+            // 直接读取
+            std::string tmp = "";
+            // 不考虑pass
+            int cost = preAction == 2?  std::max(16, int(ceil(preTocken*0.8))):64;
+            // 令牌够直接读取
+            while(curG>=cost){
+                //读取
+                // 遍历该文件所有请求，设置已读该处
+                int cur_obj_id = unit[pos];
+                if(cur_obj_id != 0){//如果有数据
+                    char cur_obj_pos = obj_pos[pos];
+                    //清0表示此单位已经读取
+                    object[cur_obj_id].reqNum_[cur_obj_pos] = 0;
+
+                    for(auto it = object[cur_obj_id].request_list.begin(); it !=  object[cur_obj_id].request_list.end(); it++){
+                        bool is_done = request[*it].readData(cur_obj_pos, object[cur_obj_id]);
+                        if(is_done){
+                            done_request.insert(*it);
+                            //同时断开连接
+                            it = object[cur_obj_id].request_list.erase(it);
+                            it = std::prev(it);
+                        }
+                    }
+
+                }
+
+
+
+
+                pos = pos%V + 1;
+                curG -= cost;
+
+                preTocken = cost;
+                preAction = 2;
+                tmp += "r";
+
+                cost = std::max(16, int(ceil(preTocken*0.8)));//更新cost
+            }
+            tmp += "#\n";
+            printf(tmp.c_str());
+        }
+
+
+    }
+    int computeSumpfJumpLenFromPos(int _pos){
+        int res = 0;
+        for(int i = 0;i<from_jump_to_readLen;++i){
+            int tmpPos = (_pos+i)%V+1;
+            int cur_obj_id = unit[tmpPos];
+            if(cur_obj_id != 0){//如果有数据
+                char cur_obj_pos = obj_pos[tmpPos];
+                //清0表示此单位已经读取
+                res += object[cur_obj_id].reqNum_[cur_obj_pos];
+            };
+        }
+        return res;
+    }
+
 
 
     int maxG; //最大G值
@@ -179,7 +341,11 @@ public:
     std::vector<Request>& request;
     std::vector<Object>& object;
     const GlobalInfo& globalInfo;
+    std::unordered_set<int> requestUnit;
     private:
     std::vector<int> tagBegins;
+    //每次来请求，把对应的请求物体存储的位置单元记录下来
+    
+    int from_jump_to_readLen;
 
 };
