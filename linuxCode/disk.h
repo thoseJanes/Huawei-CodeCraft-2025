@@ -37,6 +37,8 @@ struct HeadOperator{
         int aheadRead;//之前的读操作数量。
         int passTimes;//pass的次数。
         int jumpTo;//跳到的位置。
+
+        int param;//指参数。只需要比较相同action的参数值时使用。
     };
 };
 LogStream& operator<<(LogStream& s, HeadOperator& headOperator) {
@@ -331,7 +333,7 @@ public:
     /// @brief 通过存储单元位置返回存储单元信息
     /// @param unitPos 存储单元的位置
     /// @return 返回存储单元的信息，包括存储单元所属的对象Id及其在对象中的位置Id
-    DiskUnit getUnitInfo(int unitPos){
+    const DiskUnit& getUnitInfo(int unitPos) const {
         if(unitPos<0||unitPos>=diskSpace.getBufLen()){
             LOG_DISK << "index " << unitPos <<" out of range!";
             throw std::out_of_range("buffer space out of range!");

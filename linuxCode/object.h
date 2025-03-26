@@ -132,6 +132,16 @@ public:
     //     }
     //     return false;
     // }
+    bool allPlaned(){
+        bool flag = true;
+        for(int i=0;i<size;i++){
+            //如果存在对i的请求且该请求还未规划
+            if(this->unitReqNum[i] && planReqTime[i]<Watch::getTime()){
+                flag = false;
+            }
+        }
+        return flag;
+    }
     bool isPlaned(int unitId){
         if(this->planReqUnit[unitId]>=0
             && planReqTime[unitId]>=Watch::getTime()){
@@ -157,7 +167,14 @@ public:
             this->planReqTime[unitId] = timeRequired;
         }
         this->planReqUnit[unitId] = diskId;
-        
+    }
+    void test_plan(int unitId, int diskId, int timeRequired, bool isOffset){
+        if(isOffset){
+            assert(this->planReqTime[unitId] == timeRequired + Watch::getTime());
+        }else{
+            assert(this->planReqTime[unitId] == timeRequired);
+        }
+        assert(this->planReqUnit[unitId] = diskId);
     }
     void clearPlaned(int unitId){
         this->planReqUnit[unitId] = -1;

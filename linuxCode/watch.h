@@ -12,6 +12,7 @@ public:
         calBucket();
     }
     static int getTime(){return timeStamp_;}
+    static int toTimeStep(int tokens){return (tokens-1)/G+1;}
     static void calBucket(){bucket_ = (timeStamp_-1)/FRE_PER_SLICING;}
     static int getBucket(){return bucket_;}
     static void clock(){timeStamp_++;calBucket();}

@@ -28,7 +28,15 @@ public:
         //index = index%bufLen;
         return *(units_+index);
     }
-    int getBufLen(){return bufLen;}
+    const T& operator[](int index) const {
+        if(index<0||index>=bufLen){
+            LOG_DISK << "index " << index <<" out of range!";
+            throw std::out_of_range("buffer space out of range!");
+        }
+        //index = index%bufLen;
+        return *(units_+index);
+    }
+    int getBufLen() const {return bufLen;}
     ~Dim1Space(){
         free(units_);
     }

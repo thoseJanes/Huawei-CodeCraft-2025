@@ -20,7 +20,7 @@ class HeadPlanner{//全局plan，其中的tokens为全局tokens。
 private:
     friend LogStream& operator<<(LogStream& s, HeadPlanner& headPlanner);
     int spaceSize;
-    Disk* disk;//保持对disk的引用。
+    const Disk* disk;//保持对disk的引用。
     //应该存入绝对tokens数。
     std::map<int, std::pair<std::list<ActionNode>::iterator, HeadPlanner*>> readBranches = {};
 
@@ -157,23 +157,17 @@ public:
             return;//就在当前位置。
         }
     }
-
+    void pushBackActionNode(const HeadOperator& operation, int posValue, bool isOffset, int costValue, bool divisible){
+        auto lastNode = getLastActionNode();
+        int newCost = calNewTokensCost(lastNode.endTokens, costValue, divisible);
+        int newPos = calNewHeadPos(lastNode.endPos, posValue, isOffset);
+        actionNodes.push_back({operation, newPos, newCost});
+    }
+    
     //规划性质：插入读操作，策略为选择最近插入位置。
     void insertReadAsBranch(int unitPos, int* getReadOverTokens, int* getScoreLoss){
-        auto aftIt = this->actionNodes.begin();
-        int pstDist = getDistance(unitPos, (*aftIt).endPos);
-        if(this->actionNodes.size()>1){
-            int pos;int dist;
-            for(auto it = this->actionNodes.begin();it != this->actionNodes.end();it++){
-                pos = (*it).endPos;
-                //找一个最小的位置。或者找一个在jump之前的位置。注意jump之后就应该plan这个read，防止多个jump到一个地方。
-                dist = getDistance(unitPos, pos);
-                if(dist<pstDist){
-                    pstDist = dist;
-                    aftIt = it;//在谁之后插入。
-                }
-            }
-        }
+        int pstDist;
+        auto aftIt = getShortestDistance(unitPos, &pstDist);
         
         HeadPlanner* branch = new HeadPlanner(disk, *(aftIt));
         readBranches.insert({unitPos, {aftIt, branch}});
@@ -201,7 +195,7 @@ public:
             if(getScoreLoss != nullptr && newNode.action.action == READ){
                 auto unitInfo = disk->getUnitInfo(newNode.endPos-1);
                 Object* obj = sObjectsPtr[unitInfo.objId];
-                obj->virBranchPlan(unitInfo.untId, newNode.endTokens/G, false);
+                obj->virBranchPlan(unitInfo.untId, Watch::toTimeStep(newNode.endTokens), false);
                 relatedObjects.push_back(obj);
             }
         }
@@ -212,11 +206,22 @@ public:
         }
         //向后移动看看能不能改进总价值?
     }
-    //用分支修改主干
+    //用分支修改主干,会更新planed值。
     void mergeReadBranch(int unitPos){
         auto branchInfo = this->readBranches.at(unitPos);
-        actionNodes.splice(branchInfo.first, branchInfo.second->actionNodes,
+        actionNodes.erase(std::next(branchInfo.first,1), actionNodes.end());//删除branchInfo.first之后的节点。
+        actionNodes.splice(actionNodes.end(), branchInfo.second->actionNodes,
             std::next(branchInfo.second->actionNodes.begin(),1));//把branch的分支移动过来。
+        branchInfo.first ++;//移动到新的拼接部分的节点上。
+        while(branchInfo.first != this->actionNodes.end()){
+            if((*branchInfo.first).action.action==READ){
+                int newPlanedTime = Watch::toTimeStep((*branchInfo.first).endTokens);
+                int readPos = (*branchInfo.first).endPos - 1;
+                auto unitInfo = disk->getUnitInfo(readPos);
+                sObjectsPtr[unitInfo.objId]->plan(unitInfo.untId, this->diskId, newPlanedTime, false);
+            }
+        }
+
         this->readBranches.erase(unitPos);
         for(auto it = this->readBranches.begin();it!=this->readBranches.end();it++){
             delete (*it).second.second;//删除除了当前分支外的所有分支
@@ -243,18 +248,38 @@ public:
     int getDistance(int target, int from){
         return (target - from + spaceSize)%spaceSize;
     }
-
-    void pushBackActionNode(const HeadOperator& operation, int posValue, bool isOffset, int costValue, bool divisible){
-        auto lastNode = getLastActionNode();
-        int newCost = calNewTokensCost(lastNode.endTokens, costValue, divisible);
-        int newPos = calNewHeadPos(lastNode.endPos, posValue, isOffset);
-        actionNodes.push_back({operation, newPos, newCost});
+    //返回最小距离处的前一个节点。该节点执行完毕后即为最小距离。
+    std::list<ActionNode>::iterator& getShortestDistance(int target, int* getDist){
+        auto aheadIt = this->actionNodes.begin();
+        *getDist = getDistance(target, (*aheadIt).endPos);
+        int pos;int dist;
+        for(auto it = std::next(aheadIt, 1);it != this->actionNodes.end();it++){
+            pos = (*it).endPos;
+            //找一个最小的位置。或者找一个在jump之前的位置。注意jump之后就应该plan这个read，防止多个jump到一个地方。
+            dist = getDistance(target, pos);
+            if(dist<*getDist){
+                *getDist = dist;
+                aheadIt = it;//在谁之后插入。
+            }
+        }
+        return aheadIt;
     }
-    
+
     void test_syncWithHeadTest() const {
         if(this->actionNodes.front().endPos != this->disk->head.headPos){
             std::logic_error("the planner status not sync with head!!!");
         }
+    }
+    void test_nodeContinuousTest() const {
+        HeadPlanner* testPlanner = new HeadPlanner(disk, this->actionNodes.front());
+        for(auto it = std::next(actionNodes.begin(),1);it!=actionNodes.end();it++){
+            testPlanner->appendAction((*it).action);
+            auto testNode = testPlanner->getLastActionNode();
+            assert(testNode.endPos = (*it).endPos);
+            assert(testNode.endTokens = (*it).endTokens);
+            assert(testNode.action.param == (*it).action.param);
+        }
+        delete testPlanner;
     }
 
     int calNewTokensCost(int lastTokenCost, int value, bool divisible) {
@@ -301,6 +326,29 @@ public:
         recLst.splice(recLst.end(), this->actionNodes, 
             std::next(this->actionNodes.begin(), 1), lastIt);
     }
+    void excutePresentTimeStep(std::vector<HeadOperator>* handledOperation, std::vector<int>* completedRead){
+        auto head = this->disk->head;
+        auto lastIt = actionNodes.begin();
+        while(Watch::toTimeStep((*lastIt).endTokens) <= Watch::getTime()){
+            lastIt++;
+            if(!head.beginAction((*lastIt).action)){
+                throw std::logic_error("can not begin?!");
+            }
+            if(!head.completeAction(handledOperation, completedRead)){
+                throw std::logic_error("can not complete?!");
+            }
+        }
+        this->actionNodes.front().endPos = (*lastIt).endPos;
+        this->actionNodes.front().endTokens = (*lastIt).endTokens;
+        if((*lastIt).action.action==READ){
+            this->actionNodes.front().action.aheadRead = (*lastIt).action.aheadRead;
+        }else{
+            this->actionNodes.front().action.aheadRead = 0;
+        }
+        lastIt++;
+        actionNodes.erase(lastIt, actionNodes.end());
+    }
+    const Disk* getDisk() const {return this->disk;}
 
     ~HeadPlanner(){
         for(auto it = this->readBranches.begin();it!=this->readBranches.end();it++){

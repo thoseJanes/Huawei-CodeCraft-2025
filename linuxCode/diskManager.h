@@ -280,7 +280,6 @@ public:
         //计算每个单元在对应磁盘上所需的时间。并且判断单元是否和之前的单元在同一磁盘上，
         LOG_DISK << "timestamp "<< Watch::getTime()<<" plan disk:";
         std::vector<HeadPlanner*> vHeads;
-        std::vector<HeadPlanner*> jumpVHeads;
         DiskProcessor* diskPcs; Disk* disk;
         //完成上一步行动，并且把请求指针转到当前head位置。
         for(int i=0;i<this->diskGroup.size();i++){
@@ -288,7 +287,8 @@ public:
             disk = diskPcs->disk;
             if(disk->head.completeAction(&diskPcs->handledOperations, &diskPcs->completedRead)){
                 LOG_DISK << "disk "<< disk->diskId<<" completeAction";
-                if(diskPcs->roundReqUnitToPos(disk->head.headPos)){
+                if(Watch::toTimeStep(diskPcs->planner.getLastActionNode().endTokens) <= Watch::getTime()+2
+                    && diskPcs->roundReqUnitToPos(disk->head.headPos)){
                     LOG_ACTIONSN(disk->diskId) << "round disk to head pos "<<disk->head.headPos
                                                 <<", present anchor pos "
                                                 <<diskPcs->reqSpace.getAnchor().startKey
@@ -297,14 +297,25 @@ public:
                 }
                 else {
                     LOG_ACTIONSN(i) << "disk "<<i<<" has no reqUnit";
+                    commitPlan(vHeads[i]);
                 }
             }
         }
         
+
+        auto lambdaCompare = [this](Object*& a, Object*& b){
+            return objectScore(a) > objectScore(b);
+            //sort会把true的放前面。也就是把分数大的放在前面。
+        };
+        std::sort(requestedObjects.begin(), requestedObjects.end(), lambdaCompare);
+
+        std::vector<int> unitPoses;
+        std::vector<int> dists;
+        std::vector<Object*> accessibleObjects;
         //先规划工期短的磁盘。如果工期都超过当前3个时间步，则先规划请求数少的磁盘。(或者先规划空行动最多的磁盘)
-        auto lambdaCompare = [this](HeadPlanner*& a, HeadPlanner*& b){
-            if(a->getLastActionNode().endTokens/G > Watch::getTime() + 2){
-                if(b->getLastActionNode().endTokens/G > Watch::getTime() + 2){
+        auto lambdaCompareHeadPlanner = [this](HeadPlanner*& a, HeadPlanner*& b){
+            if(Watch::toTimeStep(a->getLastActionNode().endTokens) > Watch::getTime() + 2){
+                if(Watch::toTimeStep(b->getLastActionNode().endTokens) > Watch::getTime() + 2){
                     return diskGroup[a->getDiskId()]->reqSpace.getKeyNum() > 
                             diskGroup[b->getDiskId()]->reqSpace.getKeyNum();//谁keyNum最少就先规划谁。
                 }else{
@@ -313,62 +324,85 @@ public:
             }
             return a->getLastActionNode().endTokens < b->getLastActionNode().endTokens;//谁当前cost最多就先规划谁。
         };
-        std::sort(vHeads.begin(), vHeads.end(), lambdaCompare);
-        
-        //找到所有磁盘的第一个未规划plan。
-
-        //找到可达plan对应的对象。
-        //先规划价值最大的对象。
-        while(vHeads.size() && vHeads.back()->getLastTokenCost() <G) {//规划一个回合?还是完全规划然后优化？
-            auto vHead = vHeads.back();
-            diskPcs = this->diskGroup[vHead->diskId];
-            disk = diskPcs->disk;
-            //LOG_DISK << "present head:" << *vHead;
-            int unitPos = diskPcs->getNextUnplanedReqUnit();
-            LOG_DISK << "present head:" << *vHead;
-            LOG_DISK << "next unit pos:" << unitPos;
-            if(unitPos>=0){
-                auto unitInfo = disk->getUnitInfo(unitPos);
-                LOG_ACTIONSN(vHead->diskId) << "plan disk to unplaned reqUnit, [pos(" 
-                    << unitPos << "):obj(" << unitInfo.objId << "):unt(" << unitInfo.untId << ")";
-                LOG_ACTIONSN(vHead->diskId) << "obj info:" << *sObjectsPtr[unitInfo.objId];
-                if (diskPcs->toReqUnit(*vHead, unitPos)) {//只有当前时间帧能到达目标位置才能在目标位置开始读。
-                    diskPcs->multiRead(*vHead);
+        while(vHeads.size()){//loop
+            unitPoses = {};
+            dists = {};
+            //找到所有磁盘的（相对于磁头）第一个未规划plan,以及对应的object
+            for(int i=0;i<vHeads.size();i++){
+                auto planner = vHeads[i];
+                if(Watch::toTimeStep(planner->getLastActionNode().endTokens) <= Watch::getTime()+2){
+                    vHeads.erase(vHeads.begin()+i);
+                    i--;
+                    continue;
                 }
-                else {//当前时间帧无法到达下一个目标位置。确认当前规划的所有请求。
-
+                int diskId = planner->getDiskId();
+                int unitPos = diskGroup[diskId]->getNextUnplanedReqUnit();
+                if(unitPos == -1){//找不到下一个位置。
+                    vHeads.erase(vHeads.begin()+i);
+                    i--;
+                    continue;
+                }else{
+                    int dist;
+                    vHeads[i]->getShortestDistance(unitPos, &dist);
+                    dists.push_back(dist);
+                    unitPoses.push_back(unitPos);
                 }
-                LOG_DISK << "head plan:" << *vHead;
-                //如果规划完成则将其删除。
-                if(vHead->getLastTokenCost() >=G){
-                    LOG_ACTIONSN(vHead->diskId) << "commit plan for:" << *vHead;
-                    commitPlan(vHead);
-                    vHeads.pop_back();//移除最后一个，不会改变顺序
-                }
-            }else{//如果请求已经转完一圈了就停止。
-                LOG_ACTIONSN(vHead->diskId) << "commit plan for:" << *vHead;
-                commitPlan(vHead);
-                vHeads.pop_back();//不会改变顺序
             }
-            std::sort(vHeads.begin(), vHeads.end(), lambdaCompare);
+            std::sort(vHeads.begin(), vHeads.end(), lambdaCompareHeadPlanner);
+            //找到可达plan对应的对象。
+            accessibleObjects = {};
+            for(int i=0;i<vHeads.size();i++){
+                auto planner = vHeads[i];
+                if(dists[i] < G){
+                    int objId = planner->getDisk()->getUnitInfo(unitPoses[i]).objId;
+                    accessibleObjects.push_back(sObjectsPtr[objId]);//按 价值/距离 规划？
+                }else{
+                    //不可达。
+                    accessibleObjects.push_back(nullptr);
+                }
+            }
+            //按原排序顺序规划。
+            for(int i=0;i<vHeads.size();i++){
+                auto planner = vHeads[i];
+                if(accessibleObjects[i] == nullptr){
+                    planObjectsRead(findFirstUnplannedObject(requestedObjects, planner->getDiskId()));
+                }else{
+                    planObjectsRead(accessibleObjects[i]);
+                }
+            }
+            //删除时间片足够的对象。
+            for(int i=vHeads.size();i>=0;i--){
+                auto planner = vHeads[i];
+                if(Watch::toTimeStep(planner->getLastActionNode().endTokens) > Watch::getTime()+2){
+                    commitPlan(planner);
+                    vHeads.erase(vHeads.begin() + i);
+                }
+            }
+            LOG_DISK << "plan over";
         }
-        LOG_DISK << "plan over";
     }
 
-    void planObjectsRead(){
-        auto lambdaCompare = [this](Object*& a, Object*& b){
-            return objectScore(a) > objectScore(b);
-            //sort会把true的放前面。也就是把分数大的放在前面。
-        };
-        std::sort(requestedObjects.begin(), requestedObjects.end(), lambdaCompare);
+    Object* findFirstUnplannedObject(std::vector<Object*>& objVec, int diskId){
+        for(int i=0;i<objVec.size();i++){
+            //优化方向：只判断未被规划部分的分数价值
+            if(!objVec[i]->allPlaned()){
+                if(std::find(objVec[i]->replica, objVec[i]->replica+REP_NUM, diskId) 
+                    != objVec[i]->replica+REP_NUM);
+                return objVec[i];
+            }
+        }
+        return nullptr;
+    }
+
+    void planObjectsRead(Object* obj){
+        if(obj == nullptr){
+            return;
+        }
         //规划大分对象的磁盘，考虑因素：能否最快地完成这个对象。
-        for(auto it = requestedObjects.begin();it!=requestedObjects.end();it++){
-            Object* obj = *it;
-            int earliest = Watch::getTime();//这个earliest表示的是前面单元最快完成时间步。
-            for(int i=0;i<obj->size;i++){//以请求单元上累积的请求数从大到小的顺序规划.小者会被大者阻塞。
-                if(obj->unitReqNum[obj->unitReqNumOrder[i]]>0){//或者if(!obj->isPlanned())，来选择未规划的单元。
-                    planUnitsRead(obj, obj->unitReqNumOrder, i, &earliest);
-                }
+        int earliest = Watch::getTime();//这个earliest表示的是前面单元最快完成时间步。
+        for(int i=0;i<obj->size;i++){//以请求单元上累积的请求数从大到小的顺序规划.小者会被大者阻塞。
+            if(obj->unitReqNum[obj->unitReqNumOrder[i]]>0){//或者if(!obj->isPlanned())，来选择未规划的单元。
+                planUnitsRead(obj, obj->unitReqNumOrder, i, &earliest);
             }
         }
     }
@@ -395,7 +429,7 @@ public:
             auto actionPlanner = diskGroup[diskId]->planner;
             actionPlanner.insertReadAsBranch(obj->unitOnDisk[i][unitId], readOverTokens+i, &scoreLoss);
             tolTokens[i] = actionPlanner.getLastActionNode().endTokens;
-            scoreGain = std::min<int>(*aheadEarliest - readOverTokens[i]/G, 0) * obj->edgeValue;
+            scoreGain = std::min<int>(*aheadEarliest - Watch::toTimeStep(readOverTokens[i]), 0) * obj->edgeValue;
             assert(scoreGain <= 0);
             tolScore[i] = scoreGain - scoreLoss;//为负数。
             assert(tolScore[i] <= 0);
@@ -414,20 +448,19 @@ public:
         }
 
         //简单地选择这一单元规划后分数最大的。
-        *aheadEarliest = std::max<int>(*aheadEarliest, readOverTokens[diskSelected]/G);
+        *aheadEarliest = std::max<int>(*aheadEarliest, Watch::toTimeStep(readOverTokens[diskSelected]));
         for(int i=0;i<REP_NUM;i++){
             int unitPos = obj->unitOnDisk[i][unitId];
             int diskId = obj->replica[i];
             auto actionPlanner = diskGroup[diskId]->planner;
             if(i==diskSelected){
-                actionPlanner.mergeReadBranch(unitPos);
+                actionPlanner.mergeReadBranch(unitPos);//merge时会改变plan值。
             }else{
                 actionPlanner.dropReadBranch(unitPos);
             }
         }
     }
 
-    
     //执行diskId的已有规划
     //将实际开始执行的行动记录到diskInfo->handledOperations中。
     //将实际执行完成的请求记录到doneRequestIds中。
@@ -445,7 +478,7 @@ public:
         //首先completeAction，完成上一次没有完成的持续行动。
         //如果行动在这一回合还是没有完成，那么就接收两个参数。
         //应当在之前先对所有disk试试completeAction。如果返回false，那么此时的presentTokens肯定为0
-        LOG_DISK << "test commit plan for disk "<< diskId <<"\nplan:"<<actionsPlan;
+        //LOG_DISK << "test commit plan for disk "<< diskId <<"\nplan:"<<actionsPlan;
         if(disk->head.completeAction(&diskPcs->handledOperations, &diskPcs->completedRead)){
             int planNum = actionsPlan.size();
             for(auto it=std::next(actionsPlan.begin(),1);it!=actionsPlan.end();it++){
@@ -453,26 +486,26 @@ public:
                 auto actionNode = *it;
                 if(!disk->head.beginAction(actionNode.action)){
                     LOG_DISK << "begin fail, some actions to be completed";
-                    break;//要么是之前行动没有做完，要么是输入参数出了问题。
+                    break;//要么是之前行动没有做完，要么是输入参数出了问题。也可能tokens刚好为0
                 }else{
                     if(actionNode.action.action == READ){
-                        int actionFinishStep = actionNode.endTokens/G;
+                        int actionFinishStep = Watch::toTimeStep(actionNode.endTokens);
                         int pos = actionNode.endPos - 1;//因为读操作现在只可能是单步的。
                         
                         auto unitInfo = disk->getUnitInfo(pos);
-                        sObjectsPtr[unitInfo.objId]->plan(unitInfo.untId, diskId, actionFinishStep, false);
+                        sObjectsPtr[unitInfo.objId]->test_plan(unitInfo.untId, diskId, actionFinishStep, false);
                     }
                     LOG_DISK << "disk "<<disk->diskId<<" begin action:"<<actionNode;
+
                     if(!disk->head.completeAction(&diskPcs->handledOperations, &diskPcs->completedRead)){
                         break;//剩下的时间片不足以完成这个行动
                     }
-                    assert((actionNode.endTokens-1)/G == Watch::getTime());//时间对齐。
+                    assert(Watch::toTimeStep(actionNode.endTokens) == Watch::getTime());//时间对齐。
                     LOG_DISK << "disk "<<disk->diskId<<" complete action:"<<actionNode;
                     //剩下的时间片完成了这个行动。继续迭代以喂入下一个活动。
                 }
             }
         }
-        headPlanner->diskId = -1;
     }
     void freshDoneRequestIds(Disk* disk, std::vector<int> completedRead){
         for(int i=0;i<completedRead.size();i++){
@@ -493,7 +526,7 @@ public:
     
     
     //返回该回合对应磁盘磁头执行的所有动作
-    std::list<HeadOperator> getHandledOperations(int diskId){
+    std::vector<HeadOperator> getHandledOperations(int diskId){
         return std::move(diskGroup[diskId]->handledOperations);
     }
     //返回该回合完成的所有请求

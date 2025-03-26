@@ -98,6 +98,7 @@ int main()
             auto manager = worker.getDiskManager();
             auto planner = manager->getPlanner(i);
             planner->test_syncWithHeadTest();
+            planner->test_nodeContinuousTest();
         }
 
         worker.processDelete();
