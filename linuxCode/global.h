@@ -1,11 +1,23 @@
 #ifndef GLOBAL_H
 #define GLOBAL_H
-
-#include "LogTool.h"
-#include "time.h"
+#include <memory>
+#include <cmath>
 #include <list>
+#include <map>
+#include <vector>
+#include <stdexcept>
+#include "LogTool.h"
 
+#define LOG_PLANNER LOG_FILE("planner")
+#define LOG_PLANNERN(x) LOG_FILE("planner"+std::to_string(x))
 #define LOG_IPCINFO LOG_FILE("ipcInfo")
+#define LOG_BplusTreeN(x) LOG_FILE("BplusTree"+std::to_string(x))
+#define LOG_BplusTreeInfoN(x) LOG_FILE("BplusTreeInfo"+std::to_string(x))
+#define LOG_BplusTree LOG_FILE("BplusTree")
+#define LOG_BplusTreeInfo LOG_FILE("BplusTreeInfo")
+#define LOG_LINKEDSPACE LOG_FILE("circularLinkedList")
+#define LOG_LINKEDSPACEN(x) LOG_FILE("circularLinkedList"+std::to_string(x))
+#define LOG_INIT LOG_FILE("main")
 
 #define MAX_DISK_NUM (10 + 1)//磁盘id从0开始
 #define MAX_DISK_SIZE (16384 + 1)
@@ -22,6 +34,9 @@
 #define PHASE_ONE_EDGE (10)
 #define PHASE_TWO_EDGE (20)
 
+#define PLAN_STEP (1)
+#define MULTIREAD_SEARCH_NUM (10)
+#define MULTIREAD_JUDGE_LENGTH (32)
 
 #define FIRST_READ_CONSUME (64)
 
@@ -34,6 +49,7 @@ static std::vector<int> readConsumeAfterN = {
 static std::map<int, int> toAheadReadTimes = {
     {64, 0},{52, 1},{42, 2},{34, 3},{28, 4}, {23, 5},{19, 6}, {16, 7}//8代表大于等于8
 };
+static int readProfitBuffer[MAX_DISK_SIZE +10];
 inline int getReadConsumeAfterN(int n){
     if(n>readConsumeAfterN.size()-1){
         return 16;
@@ -48,6 +64,8 @@ inline int getAheadReadTimes(int nextReadConsume){
     return toAheadReadTimes[nextReadConsume];
 }
 
+
+
 extern int T;//时间步
 extern int M;//tag数，输入tag从1到M，内部从0到M-1
 extern int N;//磁盘数，输入磁盘从1开始到N，内部磁盘从0到N-1
@@ -55,7 +73,7 @@ extern int V;//单元数，输入单元从1开始到V，内部单元用0到V-1�
 extern int G;//令牌数，
 
 template<typename T>
-LogStream& operator<<(LogStream& s, std::vector<T>& vec){
+LogStream& operator<<(LogStream& s, const std::vector<T>& vec){
     s<<"(vec:";
     for(int i=0;i<vec.size();i++){
         s << vec[i]<<",";
@@ -65,10 +83,10 @@ LogStream& operator<<(LogStream& s, std::vector<T>& vec){
 }
 
 template<typename T>
-LogStream& operator<<(LogStream& s, std::list<T>& lst){
+LogStream& operator<<(LogStream& s, const std::list<T>& lst){
     s<<"(lst:";
     for(auto it = lst.begin();it!=lst.end();it++){
-        s<<*it<<",";
+        s<<*it<<", ";
     }
     s<<")";
     return s;

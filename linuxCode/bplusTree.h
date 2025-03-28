@@ -6,12 +6,8 @@
 #include <assert.h>
 #include <stack>
 #include <exception>
-//#include "tools/LogT"
-#include "LogTool.h"
-#define LOG_BplusTreeN(x) LOG_FILE("BplusTree"+std::to_string(x))
-#define LOG_BplusTreeInfoN(x) LOG_FILE("BplusTreeInfo"+std::to_string(x))
-#define LOG_BplusTree LOG_FILE("BplusTree")
-#define LOG_BplusTreeInfo LOG_FILE("BplusTreeInfo")
+#include "global.h"
+
 
 template<int SIZE>
 class BplusInnerNode;
@@ -298,7 +294,6 @@ public:
             throw std::runtime_error("Failed on merging inner node!");
         }
     }
-
 };
 
 template<int SIZE>
@@ -479,6 +474,13 @@ public:
     }
 };
 
+template<int SIZE>
+class BplusTree;
+
+template<int SIZE>
+inline LogStream& operator<<(LogStream& s, const BplusTree<SIZE>& v);
+
+
 
 template<int SIZE>
 class BplusTree {
@@ -486,35 +488,109 @@ class BplusTree {
     typedef BplusLeafNode<SIZE> LeafNode;
     typedef BplusInnerNode<SIZE> InnerNode;
 private:
-    friend LogStream& operator<<(LogStream& s, const BplusTree<SIZE>& v);
-    struct Anchor {
-        int step = 0;
-        int startKey = 0;
-        int pos = 0;
-        LeafNode* node;
-        bool isValid;
-    //public:
-    //    //这个Anchor是有风险的，它无法保证插入或者删除节点之后内部保存的节点还有效！
-    //    //可以把Anchor存在该对象中来保证，如果插入或者删除了节点就把Anchor内部参数置为无效?
-    //    Anchor(LeafNode* n, int p) :pos(p) { node = *n; }
-    //    
-    };
+    template<int T>
+    friend LogStream& operator<<(LogStream& s, const BplusTree<T>& v);
     InnerNode* root;
     LeafNode* head = nullptr;
-    Anchor anchor;
     int keyNum;
     //head是节点粒度。anchor是key粒度。
 
 public:
-    int id;
-    BplusTree() :root(new InnerNode()), anchor{0,0,0, nullptr, false}, keyNum(0) {
+    struct Iterator {
+    private:
+        int startKey = 0;
+        int pos = 0;
+        LeafNode* node;
+        bool end;
+    public:
+        Iterator():end(true){}
+        Iterator(LeafNode* node, int pos) :end(false) {
+            this->pos = pos;
+            this->node = node;
+            this->startKey = node->keys[pos];
+        }
+        Iterator(LeafNode* node, int pos, int startKey, bool end) {
+            this->pos = pos;
+            this->node = node;
+            this->startKey = startKey;
+            this->end = end;
+        }
+        int getKey() {
+            if (this->end) {
+                throw std::out_of_range("is end!");
+            };
+            return this->node->keys[this->pos];
+        }
+        Iterator& toNext() {
+            if (this->end) {
+                return *this;
+            }
+            if (this->node->keyNum - 1 > this->pos) {
+                this->pos += 1;
+            }
+            else {
+                this->node = this->node->next;
+                this->pos = 0;
+            }
+            if (getKey() == this->startKey) {
+                this->end = true;
+            }
+            return *this;
+        }
+        Iterator getNext() {
+            if (this->end) {
+                return Iterator();
+            }
+            int pos; LeafNode* node;
+            if (this->node->keyNum - 1 > this->pos) {
+                pos = this->pos + 1;
+                node = this->node;
+            }
+            else {
+                node = this->node->next;
+                pos = 0;
+            }
+            if (getKey() == this->startKey) {
+                return Iterator();
+            }
+            else {
+                return Iterator(node, pos, this->startKey, end);
+            }
+        }
+        bool isEnd() {
+            return end;
+        }
+        int getStartKey() { return this->startKey; }
+        //iterator next() {
+        //    if (isEnd) {
+        //        return;
+        //    }
+        //    if (anchor.node->keyNum - 1 > anchor.pos) {
+        //        anchor.pos += 1;
+        //    }
+        //    else {
+        //        anchor.node = anchor.node->next;
+        //        anchor.pos = 0;
+        //    }
+        //    if (getKey() == startKey) {
+        //        isEnd = true;
+        //    }
+        //    return *this;
+        //}
+        
+        //public:
+        //    //有风险，它无法保证插入或者删除节点之后内部保存的节点还有效
+        //    //可以把Anchor存在该对象中来保证，如果插入或者删除了节点就把Anchor内部参数置为无效?
+        //    Anchor(LeafNode* n, int p) :pos(p) { node = *n; }
+    };
+    int id;//用于log
+    BplusTree() :root(new InnerNode()), keyNum(0) {
         LOG_BplusTree << "init bplus tree.";
         root->parent = nullptr;//必须赋nullptr。InnerNode如果没有parent则不受最小节点限制。
         LOG_BplusTree << "init bplus tree over.";
     }
     void insert(int key) {
         LOG_BplusTreeN(id) << "insert key" << key;
-        anchor.isValid = false;
         if (root->keyNum == 0) {
             head = new LeafNode(key);
             head->next = head;
@@ -614,7 +690,6 @@ public:
             LOG_BplusTree << "error: empty tree!";
             throw std::runtime_error("The root of bplusTree is unexpectedly set nullptr.");
         }
-        anchor.isValid = false;
         LOG_BplusTree << "start remove key "<<key;
         //找到叶子节点
         Node* node = root;
@@ -698,9 +773,8 @@ public:
     }
 
     int getKeyNum(){return keyNum;}
-    const Anchor& getAnchor(){return this->anchor;}
     //设置Anchor指向的key（如果不存在则指向前一个）
-    void setAnchor(int key, bool setHead = false) {
+    Iterator iteratorAt(int key, bool setHead = false) {
         if (head == nullptr) {
             LOG_BplusTreeN(this->id) << "fail: tree has no key!";
             throw std::runtime_error("Tree has no key. Add key before setAnchor!");
@@ -718,12 +792,7 @@ public:
                 if (setHead) {
                     head = static_cast<LeafNode*>(node)->next;
                 }
-                anchor.isValid = true;
-                anchor.node = static_cast<LeafNode*>(node)->next;
-                anchor.pos = 0;
-                anchor.startKey = anchor.node->keys[anchor.node->keyNum-1];
-                anchor.step = 0;
-                return;
+                return Iterator(static_cast<LeafNode*>(node)->next, 0);
             }
             else {
                 node = static_cast<InnerNode*>(node)->children[pos];
@@ -733,91 +802,10 @@ public:
         if (setHead) {
             head = static_cast<LeafNode*>(node);
         }
-        anchor.isValid = true;
-        anchor.node = static_cast<LeafNode*>(node);
-        anchor.pos = pos;
-        anchor.startKey = anchor.node->keys[pos];
-        anchor.step = 0;
-        return;
+        return Iterator(static_cast<LeafNode*>(node), pos);
     }
-    int getNextKeyByAnchor(bool toNext) {
-        if (anchor.isValid) {
-            int key = anchor.node->keys[anchor.pos];
-            if(anchor.step>=1 && key == anchor.startKey){
-                return -1;
-            }
-            if(toNext){
-                if (anchor.node->keyNum - 1 > anchor.pos) {
-                    anchor.pos += 1;
-                }
-                else {
-                    anchor.node = anchor.node->next;
-                    anchor.pos = 0;
-                }
-                anchor.step += 1;
-            }
-            return key;
-        }
-        else {
-            LOG_BplusTreeN(this->id) << "fail: anchor is not valid!";
-            throw std::logic_error("Anchor is not valid. \
-                Insert or remove will reset anchor to invalid. Call setAnchor before getNextKeyByAnchor. ");
-            //抛出异常后函数会被中断，不需要返回值。
-        }
-    }
+    const InnerNode* getRoot() { return this->root; }
 };
-
-template<int SIZE>
-inline LogStream& operator<<(LogStream& s, const BplusTree<SIZE>& v)
-{
-    std::vector<BplusNode<SIZE>*> nodeLayer = {};
-    std::vector<BplusNode<SIZE>*> nodeNextLayer = {};
-    nodeLayer.push_back(v.root);
-    if (v.root) {
-        s << "\n(num:"<<v.keyNum<<")";
-        s << *v.root;
-        while (nodeLayer.size()) {
-            s << "----";
-            for (int i = 0; i < nodeLayer.size(); i++) {
-                auto node = nodeLayer[i];
-                if (!node->isLeaf) {
-                    BplusInnerNode<SIZE>* inode = static_cast<BplusInnerNode<SIZE>*>(node);
-                    s << "{";
-                    for (int j = 0; j < inode->keyNum; j++) {
-                        nodeNextLayer.push_back(inode->children[j]);
-                        //if (inode->children[j]->isLeaf) {
-                        //    s << *inode->children[j] << "->" << *(static_cast<BplusLeafNode<SIZE>*>(inode->children[j])->next)<<", ";
-                        //}
-                        //else {
-                            s << *inode->children[j] << ",";
-                        //}
-                        //s << *inode->children[j]->parent << ",";
-                    }
-                    s << "}";
-                }
-            }
-            //break;
-            nodeLayer = nodeNextLayer;
-            nodeNextLayer = {};
-        }
-    }
-    if (v.head) {
-        s << "\nlinked list:{" << *v.head <<":";
-        BplusLeafNode<SIZE>* temp = v.head->next;
-        if (temp != v.head) {
-            while (temp != v.head) {
-                s << *temp;
-                temp = temp->next;
-            }
-        }
-        s << "}";
-    }
-    if (v.anchor.isValid) {
-        s << "\nAnchor:{" << v.anchor.node->keys[v.anchor.pos];
-    }
-    
-    return s;
-}
 
 
 #endif

@@ -3,12 +3,11 @@
 #include <stdexcept>
 #include <memory>
 #include <algorithm>
+
 #include <vector>
 #include <array>
-#include <cmath>
 #include <list>
 
-#include "noncopyable.h"
 #include "bufferSpace.h"
 #include "circularLinkedList.h"
 
@@ -23,12 +22,13 @@
 
 
 
-enum HeadAction{
+enum HeadAction {
     NONE,//只用在磁头的toBeComplete中。
     START,//只用在HeadPlanner中。作为planner的起始节点。相应参数为AheadRead
     JUMP,//HeadOperator参数：jumpTo，跳到的位置
     PASS,//HeadOperator参数：passTimes，连续pass的步数
-    READ//HeadOperator参数：aheadRead，前面已经读过的步数。
+    READ,//HeadOperator参数：aheadRead，前面已经读过的步数。
+    VREAD//只读不报。适用于无效读。
 };
 
 struct HeadOperator{
@@ -41,6 +41,24 @@ struct HeadOperator{
         int param;//指参数。只需要比较相同action的参数值时使用。
     };
 };
+LogStream& operator<<(LogStream& s, const HeadOperator& headOperator) {
+    if (headOperator.action == JUMP) {
+        s << "[JUMP jumpTo:" << headOperator.jumpTo << "]";
+    }
+    else if (headOperator.action == PASS) {
+        s << "[PASS times:" << headOperator.passTimes << "]";
+    }
+    else if (headOperator.action == READ) {
+        s << "[READ aheadRead:" << headOperator.aheadRead << "]";
+    }
+    else if (headOperator.action == VREAD) {
+        s << "[VREAD aheadRead:" << headOperator.aheadRead << "]";
+    }
+    else if (headOperator.action == START) {
+        s << "[START aheadRead:" << headOperator.aheadRead << "]";
+    }
+    return s;
+}
 LogStream& operator<<(LogStream& s, HeadOperator& headOperator) {
     if (headOperator.action == JUMP) {
         s << "[JUMP jumpTo:" << headOperator.jumpTo << "]";
@@ -50,6 +68,12 @@ LogStream& operator<<(LogStream& s, HeadOperator& headOperator) {
     }
     else if (headOperator.action == READ) {
         s << "[READ aheadRead:" << headOperator.aheadRead << "]";
+    }
+    else if (headOperator.action == VREAD) {
+        s << "[VREAD aheadRead:" << headOperator.aheadRead << "]";
+    }
+    else if (headOperator.action == START) {
+        s << "[START aheadRead:" << headOperator.aheadRead << "]";
     }
     return s;
 }
@@ -80,7 +104,7 @@ public:
     }
     int calTokensCost(HeadOperator headOperator){
         auto action = headOperator.action;
-        if(action == READ){
+        if(action == READ || action ==VREAD){
             assert(headOperator.aheadRead == getAheadReadTimes(readConsume));
             int consume = readConsume;
             readConsume = getNextReadConsume(readConsume);
@@ -103,7 +127,7 @@ public:
             return false;
         }
         LOG_ACTIONSN(id) << "begin action" << headOperator;
-        if(headOperator.action == READ && presentTokens > 0){
+        if((headOperator.action == READ||headOperator.action == VREAD) && presentTokens > 0){
             toBeComplete = headOperator;
             return true;
         }else if(headOperator.action == PASS && presentTokens > 0){
@@ -128,10 +152,14 @@ public:
         if(toBeComplete.action == NONE){
             return true;
         }
-        if(action == READ){
+        if(action == READ|| action == VREAD) {
             if(tokensOffset>0 && presentTokens >= tokensOffset){
+                //当前策略不存在这种情况
+                assert(false);
                 //如果已经有读开始，但是还未结束
-                (*completedRead).push_back(headPos);
+                if (completedRead != nullptr && action != VREAD) {
+                    (*completedRead).push_back(headPos);
+                }
 
                 headPos += 1; headPos %= spaceSize;
 
@@ -141,7 +169,9 @@ public:
                 readConsume = getNextReadConsume(readConsume);
             }else if(readConsume <= presentTokens){
                 //如果没有读开始，刚开始且能够完成
-                (*completedRead).push_back(headPos);
+                if (completedRead != nullptr && action != VREAD) {
+                    (*completedRead).push_back(headPos);
+                }
 
                 headPos += 1; headPos %= spaceSize;
 
@@ -192,6 +222,7 @@ public:
                 readConsume = FIRST_READ_CONSUME;
 
                 toBeComplete = {NONE, 0};
+                return true;
             }else{
                 return false;
             }
@@ -204,7 +235,7 @@ public:
             this->presentTokens = this->presentTokens - this->tokensOffset;
         }
         int pos = this->headPos;
-        if (this->toBeComplete.action = READ) {
+        if (this->toBeComplete.action == READ || this->toBeComplete.action == VREAD) {
             canceledRead->push_back(this->headPos);
         }
         this->toBeComplete = { NONE, 0 };
@@ -464,5 +495,8 @@ public:
         每次取十个磁头最靠近的十个请求，规划是否选择这十个请求中的副本。
     */
 };
+
+
+
 
 #endif

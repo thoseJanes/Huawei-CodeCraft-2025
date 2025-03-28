@@ -1,5 +1,6 @@
 #include <memory>
 #include <stdexcept>
+
 #include <vector>
 #include "noncopyable.h"
 #include "LogTool.h"

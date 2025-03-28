@@ -56,16 +56,22 @@ public:
             //对于overtime，第105个时间片分数还是会减，
             //减完了如果发现分数是0,那么这时候应该只有overtime的req。
             //然后再更新overtime，这时候才会把edgeValue清零。
-
             //对于phaseTwo，是第11个时间片才开始多减，所以应该在第10个时间片更新。
             obj->clockScore();
             if(obj->score < 0){
-                throw std::logic_error("something wrong. score is less than zero. ");
+                //这里的原因是，对象处理完了所有请求，所以分数为0了，但是刚好又有超时请求，所以边缘不为0？
+                LOG_OBJECT << *obj;
+                assert(!obj->hasValidRequest());
+                assert(obj->edgeValue == obj->objRequests.size() * PHASE_TWO_EDGE * SCORE_FACTOR(obj->size));
+                assert(obj->score == -obj->edgeValue);
+                obj->score = 0;//把负的分数恢复为0.edgeValue在overtime中处理。
+                
+                //throw std::logic_error("something wrong. score is less than zero. ");
             }
             if(obj->score == 0){
                 //此时，对象只有overtime的request。
                 if(obj->hasValidRequest() || 
-                        obj->edgeValue!=obj->objRequests.size() * PHASE_TWO_EDGE){
+                        obj->edgeValue!=obj->objRequests.size() * PHASE_TWO_EDGE * SCORE_FACTOR(obj->size)){
                     throw std::logic_error("obj should only has overtime requests,\
                          and number of them equals edgeValue/PHASE_TWO_EDGE");
                 }else{
@@ -90,7 +96,7 @@ public:
                 //先消除obj的统计数据影响
                 auto obj = sObjectsPtr[req->objId];
                 //更新obj内部的Request和单元请求数，更新disk内的请求单元链表。
-                auto overtimeReqUnitsOrder = obj->dropRequest(overtimeReqTop);//需要在此之前更新价值
+                auto overtimeReqUnitsOrder = obj->dropOvertimeRequest(overtimeReqTop);//需要在此之前更新价值
                 diskManager.freshOvertimeReqUnits(*obj, overtimeReqUnitsOrder);
             }
             overtimeReqTop += 1;//静态变量加一，循环停止时，当前req指向有效的req或者nullptr。
@@ -135,23 +141,38 @@ public:
         //接收数据和处理数据
         int n_delete;
         int id;
-        std::vector<int> requestIds = {};
+        std::vector<Object*> objs = {};
         scanf("%d", &n_delete);
         LOG_IPCINFO << "[interactor]\n" << n_delete;
+        int tolDeleteReqNum = 0;
         for (int o = 0; o < n_delete; o++) {
             scanf("%d", &id);
-            LOG_IPCINFO  << id;
             Object* obj = sObjectsPtr[id];//获取要删除的对象
+            objs.push_back(obj);
+            tolDeleteReqNum += obj->objRequests.size();
+            tolDeleteReqNum += obj->overtimeRequests.size();
+            LOG_IPCINFO << id;
+        }
+        printf("%d\n", tolDeleteReqNum);
+        LOG_IPCINFO << "[player]\n" << tolDeleteReqNum;
+
+        for (int o = 0; o < n_delete; o++) {
+            Object* obj = objs[o];
             HistoryBucket::addDel(1, obj->tag);//更新bucket数据
             std::list<Request*>& requests = obj->objRequests;
-            for(auto it=requests.begin();it!=requests.end();it++){//这时候放入的请求应该都没过期且没delete
-                requestIds.push_back((*it)->reqId);//获取对象相关的请求id
+            for (auto it = obj->overtimeRequests.begin(); it != obj->overtimeRequests.end(); it++) {
+                printf("%d\n", *it);
+                LOG_IPCINFO << *it;
             }
+            for(auto it=requests.begin();it!=requests.end();it++){//这时候放入的请求应该都没过期且没delete
+                printf("%d\n", (*it)->reqId);
+                LOG_IPCINFO << (*it)->reqId;
+            }
+
             for (int i = 0; i < REP_NUM; i++) {
                 int diskId = obj->replica[i];
                 LOG_BplusTreeN(diskId) << "delete obj " << obj->objId << " reqUnit on deleting it";
             }
-
             //在被请求对象中删除该对象。
             if(obj->score != 0){
                 for(int i=0;i<requestedObjects.size();i++){
@@ -167,19 +188,10 @@ public:
                     }
                 }
             }
-            
             LOG_OBJECT << "start free space";
             diskManager.freeSpace(*obj);//删除磁盘空间。以及清除相应请求。
             LOG_OBJECT << "start delete object";
-            deleteObject(id);//会删除obj和其关联的request
-        }
-        
-        //输出数据
-        printf("%d\n", static_cast<int>(requestIds.size()));
-        LOG_IPCINFO << "[player]\n" << requestIds.size();
-        for(int i=0;i<requestIds.size();i++){
-            printf("%d\n", requestIds[i]);
-            LOG_IPCINFO << requestIds[i];
+            deleteObject(obj->objId);//会删除obj和其关联的request
         }
         fflush(stdout);
     }
@@ -225,15 +237,13 @@ public:
             for(int j=0;j<headOperation.size();j++){//多个操作遍历
                 auto operate = headOperation[j];
                 if(operate.action == PASS){
-                    for(int k=0;k<operate.times;k++){
+                    for(int k=0;k<operate.passTimes;k++){
                         actionBuffer[bufCur] = 'p';
                         bufCur++;
                     }
-                }else if(operate.action == READ){
-                    for(int k=0;k<operate.times;k++){
-                        actionBuffer[bufCur] = 'r';
-                        bufCur++;
-                    }
+                }else if(operate.action == READ || operate.action == VREAD){
+                    actionBuffer[bufCur] = 'r';
+                    bufCur++;
                 }
             }
             actionBuffer[bufCur] = '#';bufCur++;
@@ -253,7 +263,9 @@ public:
             LOG_IPCINFO << request_id<< " " << object_id ;
             Object* obj = sObjectsPtr[object_id];
             HistoryBucket::addReq(1, obj->tag);
-
+            if (obj->score == 0) {
+                requestedObjects.push_back(obj);
+            }
             auto newReqUnits = obj->createRequest(request_id);
             diskManager.freshNewReqUnits(*obj, newReqUnits);
         }
@@ -264,8 +276,9 @@ public:
         //跳移拼接算子：把跳的action处分开，然后拼接。
         //对象变副本算子：把对象副本放到规划少的磁头去读
         //单元变副本算子：把单元副本放到规划少的磁头去读
-        diskManagessssssssr.planObjectsRead();
+        diskManager.multiReadStrategy();
         
+        std::vector<int> diskHeadPos;
         //输出读取过程。
         for(int i=0;i<N;i++){//不同磁盘
             auto headOperation = diskManager.getHandledOperations(i);
@@ -275,7 +288,10 @@ public:
             actionsToChars(actionBuffer, headOperation);
             printf("%s\n", actionBuffer);
             LOG_IPCINFO << "[player]\n" << actionBuffer ;
+            diskHeadPos.push_back(diskManager.getPlanner(i)->getDisk()->head.headPos);
         }
+
+        LOG_IPCINFO << "Disk head position:" << diskHeadPos;
 
         //输出完成的请求。
         auto doneReqIds = diskManager.getDoneRequests();

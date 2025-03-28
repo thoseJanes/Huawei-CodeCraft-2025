@@ -31,6 +31,18 @@ LogStream& operator<<(LogStream& s, const Object& obj){
     for (int j = 0; j < obj.size; j++) {
         s << obj.planReqTime[j] << ", ";
     }
+    s << ", virPlan:";
+    for (int j = 0; j < obj.size; j++) {
+        s << obj.virPlanReqTime[j] << ", ";
+    }
+    s << ", coscore:";
+    for (int j = 0; j < obj.size; j++) {
+        s << obj.coScore[j] << ", ";
+    }
+    s << ", coedge:";
+    for (int j = 0; j < obj.size; j++) {
+        s << obj.coEdgeValue[j] << ", ";
+    }
     
     s<<"}\n";
     return s;

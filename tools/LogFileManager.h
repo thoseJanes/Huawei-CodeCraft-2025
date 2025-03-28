@@ -1,7 +1,9 @@
 #ifndef LOGFILEMANAGER_H
 #define LOGFILEMANAGER_H
-#include "LogFile.h"
 #include <filesystem>
+
+#include "LogFile.h"
+
 
 namespace fs = std::filesystem;
 //用来管理各种文件的Log。

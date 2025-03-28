@@ -1,10 +1,9 @@
 #if !defined(CIRCULARLIST_H)
 #define CIRCULARLIST_H
 #include <assert.h>
-#include "LogTool.h"
+#include "global.h"
 
-#define LOG_LINKEDSPACE LOG_FILE("circularLinkedList")
-#define LOG_LINKEDSPACEN(x) LOG_FILE("circularLinkedList"+std::to_string(x))
+
 
 
 struct SpaceUnitNode{

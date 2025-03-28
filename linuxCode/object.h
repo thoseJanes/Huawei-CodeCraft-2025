@@ -1,11 +1,12 @@
-#if !defined(OBJECT_H)
+﻿#if !defined(OBJECT_H)
 #define OBJECT_H
-#include "global.h"
-#include "watch.h"
-#include <vector>
-#include <stdexcept>
+
+#include <cstring>
 #include <algorithm>
 #include <assert.h>
+#include "global.h"
+#include "watch.h"
+
 
 
 #define LOG_REQUEST LOG_FILE("request")
@@ -32,21 +33,30 @@ public:
         }
         this->is_done = -size + 1;
     }
-    void commitUnit(int unit){
+    bool commitUnit(int unit){
         if(!this->unitFlag[unit]){
             this->unitFlag[unit] = true;
             is_done += 1;
+            return true;
         }
+        return false;
     }
     void calScore(int size, int* getScore, int* getEdgeValue){
         int offset = Watch::getTime() - this->createdTime;
         if(offset<=PHASE_ONE_TIME){
             *getScore = SCORE_FACTOR(size)*(START_SCORE - PHASE_ONE_EDGE*offset);
-            *getEdgeValue = SCORE_FACTOR(size)*PHASE_ONE_EDGE;
         }else if(offset<EXTRA_TIME){
             //第二阶段
             *getScore = SCORE_FACTOR(size)*(START_SCORE + (PHASE_TWO_EDGE-PHASE_ONE_EDGE)*PHASE_ONE_TIME - PHASE_TWO_EDGE*offset);
-            *getEdgeValue = SCORE_FACTOR(size)*PHASE_TWO_EDGE;
+        }
+        //由于边缘是下个时间片开始时减少的分数，而非这个时间片减少的分数。
+        if (offset < PHASE_ONE_TIME) {
+            *getEdgeValue = SCORE_FACTOR(size) * PHASE_ONE_EDGE;
+        }
+        else if (offset < EXTRA_TIME) {
+            //第二阶段
+            *getScore = SCORE_FACTOR(size) * (START_SCORE + (PHASE_TWO_EDGE - PHASE_ONE_EDGE) * PHASE_ONE_TIME - PHASE_TWO_EDGE * offset);
+            *getEdgeValue = SCORE_FACTOR(size) * PHASE_TWO_EDGE;
         }
     }
     // int getEdgeValue(){
@@ -72,6 +82,8 @@ inline void deleteRequest(int id){
     requestsPtr[id] = &deletedRequest;
 }
 
+class Object;
+LogStream& operator<<(LogStream& s, const Object& obj);
 
 class Object{//由object来负责request的管理（创建/删除）
 public:
@@ -90,14 +102,15 @@ public:
     int* planReqUnit;//相应位置的单元是否已经被规划,如果被规划，记录分配的磁盘，否则置-1（防止其它磁盘再读）
     int* planReqTime;//相应位置的单元被规划完成的时间,记录该单元完成读请求的时间，否则置-1（防止其它磁盘再读）
     //每次规划使用
-    int* virPlanReqTime;//给branch用于临时比较代价的buffer。使用完需要置负一。
+    int* planBuffer;//大小为size//给branch用于临时比较代价的buffer。使用完需要置负一。也可以给连读策略用。判断是否已经被规划。
     //价值（优化方向：当前直接使用下一时刻的边缘，动态分配后可以保存多个时刻的边缘。
     int score = 0;//当前请求剩余的总分数
     int edgeValue = 0;//下一个时间步分数降低多少
     int* coScore;
     int* coEdgeValue;
     
-    std::list<Request*> objRequests;//sorted by time//不包含已完成请求。
+    std::list<Request*> objRequests = {};//sorted by time//不包含已完成请求。
+    std::vector<int> overtimeRequests = {};
 
     Object(int id, int size, int tag):objId(id),tag(tag),size(size){
         //this->unitReqNum = (int*)malloc((REP_NUM+3)*size*sizeof(int));//malloc分配0空间是合法操作。
@@ -109,7 +122,7 @@ public:
         this->planReqUnit = this->unitReqNum + size*(REP_NUM+1);
         this->planReqTime = this->unitReqNum + size*(REP_NUM+2);
         this->unitReqNumOrder = this->unitReqNum + size*(REP_NUM+3);//在commitunit时维护。
-        this->virPlanReqTime = this->unitReqNum + size*(REP_NUM+6);
+        this->planBuffer = this->unitReqNum + size*(REP_NUM+6);
 
         this->coScore = this->unitReqNum + size*(REP_NUM+4);
         this->coEdgeValue = this->unitReqNum + size*(REP_NUM+5);
@@ -119,7 +132,7 @@ public:
             this->unitReqNum[i] = 0;
             this->planReqUnit[i] = -1;
             this->planReqTime[i] = -1;
-            this->virPlanReqTime[i] = -1;
+            this->planBuffer[i] = -1;
             this->unitReqNumOrder[i] = i;
             this->coScore[i] = 0;
             this->coEdgeValue[i] = 0;
@@ -148,6 +161,9 @@ public:
             return true;
         }
         return false;
+    }
+    bool isRequested(int unitId) {
+        return this->unitReqNum[unitId] > 0;
     }
     int planedBy(int unitId){
         if(this->planReqUnit[unitId]>=0){
@@ -180,14 +196,16 @@ public:
         this->planReqUnit[unitId] = -1;
         this->planReqTime[unitId] = 0;
     }
+    
+    //用于planner创建分支比较花销。use planBuffer
     void virBranchPlan(int unitId, int timeRequired, bool isOffset){
-        if(this->virPlanReqTime[unitId] > 0){
+        if(this->planBuffer[unitId] > 0){
             throw std::logic_error("should has been cleared!!");
         }
         if(isOffset){
-            this->virPlanReqTime[unitId] = timeRequired + Watch::getTime();
+            this->planBuffer[unitId] = timeRequired + Watch::getTime();
         }else{
-            this->virPlanReqTime[unitId] = timeRequired;
+            this->planBuffer[unitId] = timeRequired;
         }
         
     }
@@ -203,12 +221,17 @@ public:
             if(this->unitReqNum[unitId]<0){
                 throw std::logic_error("num less than zero!!!");
             }
-            assert(this->planReqTime[unitId]>0);//因为规划总是从前向后。前面的单元规划好了再规划后面单元。
+            //规划单元时，有可能遇见当前单元的对象。这时候只需要计算到已规划的内容即可
+            if (this->planReqTime[unitId] <= 0) { 
+                break;
+            }//遇见了当前单元的对象
             //第(i+1)个协同的最早完成时间。
             maxAheadPlanReqTime = std::max<int>(maxAheadPlanReqTime, this->planReqTime[unitId]);
-            if(this->virPlanReqTime[unitId] > 0){
+            
+            if(this->planBuffer[unitId] > 0){
+                LOG_OBJECT << *this;
                 assert(this->planReqTime[unitId] >= Watch::getTime());
-                delay = std::max<int>(this->virPlanReqTime[unitId] - maxAheadPlanReqTime, 0);
+                delay = std::max<int>(this->planBuffer[unitId] - maxAheadPlanReqTime, 0);
                 assert(delay>=0);//目前保证这一点，后续可以扩展为负数。
                 accEdgeLoss += delay * this->coEdgeValue[i];
             }else{
@@ -217,12 +240,28 @@ public:
         }
 
         for(int i=0;i<this->size;i++){
-            this->virPlanReqTime[i] = -1;
+            this->planBuffer[i] = -1;
         }
         
         return accEdgeLoss;
     }
-
+    //用于连读比较读取分数。use planBuffer
+    void setUnitGetBuffer(int unitId, int getTime){
+        this->planBuffer[unitId] = getTime;
+        int unitScore = 0;
+    }
+    int calScoreAndClearUnitGetBuffer(){
+        int score = 0;
+        int earliestGetTime = 0;
+        for(int i=0;i<size;i++){
+            int unitId = this->unitReqNumOrder[i];
+            if(this->planBuffer[unitId] >= Watch::getTime()){
+                earliestGetTime = std::max(this->planBuffer[unitId], earliestGetTime);
+                score += this->coScore[unitId] - this->coEdgeValue[unitId]*(earliestGetTime - Watch::getTime());
+            }
+            this->planBuffer[unitId] = -1;//把buffer归-1.
+        }
+    }
     
     //确认单元之后，需要在reqSpace中删除其它副本。
     /// @brief commit a unit which has been read.
@@ -237,21 +276,21 @@ public:
         auto it=objRequests.begin();
         while(it!=objRequests.end()){
             Request* request = *it;
-            request->commitUnit(unitId);
+            bool freshed = request->commitUnit(unitId);
             int getScore;int getEdge;
+            if (Watch::getTime() == 394 && objId == 897) {
+                int test = 0;
+            }
             if(request->is_done > 0){//只要有请求done了，被完成的一定是剩余单元数最大的请求。
                 assert(unitId==unitReqNumOrder[0]);
                 LOG_REQUEST<<"request "<<request->reqId<<" done";
                 doneRequestIds->push_back(request->reqId);
 
                 request->calScore(this->size, &getScore, &getEdge);
-                flowDownScoreAndEdge(1, getScore, getEdge);
-                assert(this->coEdgeValue[0]==0);
-                assert(this->coScore[0]==0);
-
+                flowDownScoreAndEdge(0, getScore, getEdge);
                 deleteRequest(request->reqId);
                 it = objRequests.erase(it);//it会指向被删除元素的下一个元素
-            }else{
+            }else if(freshed){
                 //更新协同分数值。
                 int coValue = -request->is_done+1;//协同值，也即剩余的请求单元数。
                 request->calScore(this->size, &getScore, &getEdge);
@@ -259,7 +298,11 @@ public:
                 flowDownScoreAndEdge(coValue, getScore, getEdge);
                 it++;
             }
+            else {
+                it++;
+            }
         }
+
         //把请求该单元的请求数、该单元分配给的磁盘都重置。
         this->unitReqNum[unitId] = 0;
         this->clearPlaned(unitId);
@@ -306,12 +349,13 @@ public:
         }
         //删除请求
         if((*this->objRequests.begin())->reqId == reqId){
+            overtimeRequests.push_back(reqId);
             this->objRequests.erase(this->objRequests.begin());
         }else{
             throw std::logic_error("dropped request shold be the first request!");
         }
         freshOvertimeEdge(1-req->is_done);
-        assert(overtimeReqUnits.size() == 1-req->is_done);//未完成的单元数，即协作值。
+        //这可不是协作值！这是因为请求过期而请求总数为0的单元数。assert(overtimeReqUnits.size() == 1-req->is_done);//未完成的单元数，即协作值。
         deleteRequest(reqId);
         
         return overtimeReqUnits;
@@ -332,7 +376,7 @@ public:
         }
     }
     int getReqUnitSize(){
-        int reqUnitSize;
+        int reqUnitSize = 0;
         for(int i=0;i<this->size;i++){
             if(this->unitReqNum[i]>0) {
                 reqUnitSize += 1;
@@ -349,8 +393,8 @@ public:
         this->coEdgeValue[this->size-1] += PHASE_ONE_EDGE*SCORE_FACTOR(size);
     }
     void flowDownScoreAndEdge(int coValue, int score, int edge){
-        assert(coValue>=1 && coValue <= size);
-        if(coValue==1){
+        assert(coValue>=0 && coValue < size);
+        if(coValue==0){
             this->edgeValue -= edge;
             this->score -= score;
             this->coEdgeValue[0] -= edge;
@@ -369,6 +413,10 @@ public:
         }
     }
     void freshPhaseTwoEdge(int coValue){
+        if (objId == 3110) {
+            int test = 0;
+            int test2 = test+3;
+        }
         this->edgeValue += (PHASE_TWO_EDGE - PHASE_ONE_EDGE)*SCORE_FACTOR(size);
         this->coEdgeValue[coValue-1] += (PHASE_TWO_EDGE - PHASE_ONE_EDGE)*SCORE_FACTOR(size);
     }
@@ -377,7 +425,7 @@ public:
         this->coEdgeValue[coValue-1] -= PHASE_TWO_EDGE*SCORE_FACTOR(size);
     }
     
- 
+    
     //just for test. after overtime request removed.
     void test_validRequestsTest() const {
         for(auto it = objRequests.begin();it!=objRequests.end();it++){
@@ -426,7 +474,7 @@ inline Object* createObject(int id, int size, int tag){
     return object;
 }
 
-LogStream& operator<<(LogStream& s, const Object& obj);
+
 #endif
 
 
