@@ -3,7 +3,7 @@
 #include "watch.h"
 #include <memory>
 #include <cstdlib>
-
+#include <algorithm>
 #define LOG_BUCKETDATA LOG_FILE("bucketData")
 
 class StatisticsBucket{
@@ -11,8 +11,43 @@ class StatisticsBucket{
         static  int*  * delSta;
         static  int*  * reqSta;
         static  int*  * wrtSta;
-        static void initBuckData(int** delsta, int** reqsta, int** wrtsta){
+        static double* rltSta;
+        static void initBuckData(int** delsta, int** wrtsta, int** reqsta){
             delSta = delsta;reqSta = reqsta;wrtSta = wrtsta;
+        }
+        static void initRelativity(double* relativity) {
+            rltSta = relativity;
+        }
+        static double getRelativity(int tagi, int tagj) {
+            return rltSta[tagi * M + tagj];
+        }
+        static int getMaxRltTag(int tag, const std::vector<int>& tagsExcluded) {
+            int maxRltTag = 0;
+            double maxRltVal = 0;
+            for (int i = 0; i < M; i++) {
+                if (std::find(tagsExcluded.begin(), tagsExcluded.end(), i) == tagsExcluded.end()) {//如果i没有在tagIn中
+                    double rlt = rltSta[i * M + tag];
+                    if (rlt > maxRltVal) {
+                        maxRltVal = rlt;
+                        maxRltTag = i;
+                    }
+                }
+            }
+            return maxRltTag;
+        }
+        static int getMinRltTag(int tag, const std::vector<int>& tagsExcluded) {
+            int minRltTag = 0;
+            int minRltVal = 1;
+            for (int i = 0; i < M; i++) {
+                if (std::find(tagsExcluded.begin(), tagsExcluded.end(), i) == tagsExcluded.end()) {//如果i没有在tagIn中
+                    int rlt = rltSta[i * M + tag];
+                    if (rlt < minRltVal) {
+                        minRltVal = rlt;
+                        minRltTag = i;
+                    }
+                }
+            }
+            return minRltTag;
         }
 };
     

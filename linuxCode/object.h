@@ -7,14 +7,12 @@
 #include "global.h"
 #include "watch.h"
 
-
-
-#define LOG_REQUEST LOG_FILE("request")
-#define LOG_OBJECT LOG_FILE("object")
-class Request;
 class Object;
-extern Object deletedObject;//作为一个被删除/不存在的对象。
-extern Request deletedRequest;
+LogStream& operator<<(LogStream& s, const Object& obj);
+
+class Request;
+extern Object* deletedObject;//作为一个被删除/不存在的对象。
+extern Request* deletedRequest;
 extern Object* sObjectsPtr[MAX_OBJECT_NUM];
 extern Request* requestsPtr[MAX_REQUEST_NUM];
 extern std::vector<Object*> requestedObjects;//通过该链表可以更新价值。并且通过该链表排序。对象被删除时也要更新。
@@ -71,19 +69,16 @@ public:
     int createdTime;
 };
 
-
-inline void deleteRequest(int id){
-    LOG_REQUEST << "delete request "<<id <<" for object "<<requestsPtr[id]->objId;
+//inline void deleteRequest(int id);
+inline void deleteRequest(int id) {
+    LOG_REQUEST << "delete request " << id << " for object " << requestsPtr[id]->objId;
     Request* request = requestsPtr[id];
-    if(request == &deletedRequest){
+    if (request == deletedRequest) {
         assert(false);
     }
     delete request;
-    requestsPtr[id] = &deletedRequest;
+    requestsPtr[id] = deletedRequest;
 }
-
-class Object;
-LogStream& operator<<(LogStream& s, const Object& obj);
 
 class Object{//由object来负责request的管理（创建/删除）
 public:
@@ -246,20 +241,31 @@ public:
         return accEdgeLoss;
     }
     //用于连读比较读取分数。use planBuffer
-    void setUnitGetBuffer(int unitId, int getTime){
-        this->planBuffer[unitId] = getTime;
-        int unitScore = 0;
+    void setUnitCompleteStepInPlanBuffer(int unitId, int value){
+        this->planBuffer[unitId] = value;
     }
-    int calScoreAndClearUnitGetBuffer(){
-        int score = 0;
+    
+    //无法正确计算分数。会受到原planBuffer的影响。
+    //会直接把分数累加到输入量上。
+    void calScoreAndClearPlanBuffer(int* getScore, int* getEdge, int* getReqNum){
+        // *getScore = 0;
+        // *getEdge = 0;
         int earliestGetTime = 0;
+        LOG_OBJECT << *this;
         for(int i=0;i<size;i++){
             int unitId = this->unitReqNumOrder[i];
             if(this->planBuffer[unitId] >= Watch::getTime()){
                 earliestGetTime = std::max(this->planBuffer[unitId], earliestGetTime);
-                score += this->coScore[unitId] - this->coEdgeValue[unitId]*(earliestGetTime - Watch::getTime());
+                //*getScore += 1+std::max(this->coScore[unitId] - this->coEdgeValue[unitId]*(earliestGetTime - Watch::getTime()), 0);
+                for (int j = i; j < size; j++) {
+                    *getScore += this->coScore[j]/(j+1);
+                }
+                *getEdge += this->coEdgeValue[unitId];//一个简单的Edge，没有考虑到具体时间。
+                *getReqNum += this->unitReqNum[unitId];
+                this->planBuffer[unitId] = -1;//计算完了这一阶段的分数，把buffer归-1.
+            }else if(this->planReqTime[unitId] >= Watch::getTime()){
+                earliestGetTime = std::max(this->planReqTime[unitId], earliestGetTime);
             }
-            this->planBuffer[unitId] = -1;//把buffer归-1.
         }
     }
     
@@ -430,7 +436,7 @@ public:
     void test_validRequestsTest() const {
         for(auto it = objRequests.begin();it!=objRequests.end();it++){
             auto request = *it;
-            if(request == &deletedRequest){
+            if(request == deletedRequest){
                 throw std::logic_error("deleted request!!!");
             }
             if(Watch::getTime() - request->createdTime == 105){
@@ -451,27 +457,29 @@ public:
     }
 };
 
+//inline void deleteObject(int id);
+//inline Object* createObject(int id, int size, int tag);
 
-inline void deleteObject(int id){
-    
-    Object* object = sObjectsPtr[id];
-    LOG_OBJECT << "delete object "<< object->objId;
-    if(object == &deletedObject){
-        LOG_OBJECT<< "object size " << object->size<< "object id "<<object->objId;
-        throw std::logic_error("object has been deleted!");
-    }
-    LOG_OBJECT<< " ";
-    sObjectsPtr[id] = &deletedObject;
-
-    delete object;
-
-    LOG_OBJECT<< "deleted over ";
-}
-inline Object* createObject(int id, int size, int tag){
-    LOG_OBJECT << "create object "<<id<<" size "<<size<<" tag "<<tag;
+inline Object* createObject(int id, int size, int tag) {
+    LOG_OBJECT << "create object " << id << " size " << size << " tag " << tag;
     Object* object = new Object(id, size, tag);
     sObjectsPtr[id] = object;
     return object;
+}
+inline void deleteObject(int id) {
+
+    Object* object = sObjectsPtr[id];
+    LOG_OBJECT << "delete object " << object->objId;
+    if (object == deletedObject) {
+        LOG_OBJECT << "object size " << object->size << "object id " << object->objId;
+        throw std::logic_error("object has been deleted!");
+    }
+    LOG_OBJECT << " ";
+    sObjectsPtr[id] = deletedObject;
+
+    delete object;
+
+    LOG_OBJECT << "deleted over ";
 }
 
 

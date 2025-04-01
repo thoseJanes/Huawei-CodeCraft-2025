@@ -18,6 +18,8 @@
 #define LOG_LINKEDSPACE LOG_FILE("circularLinkedList")
 #define LOG_LINKEDSPACEN(x) LOG_FILE("circularLinkedList"+std::to_string(x))
 #define LOG_INIT LOG_FILE("main")
+#define LOG_REQUEST LOG_FILE("request")
+#define LOG_OBJECT LOG_FILE("object")
 
 #define MAX_DISK_NUM (10 + 1)//磁盘id从0开始
 #define MAX_DISK_SIZE (16384 + 1)
@@ -35,7 +37,7 @@
 #define PHASE_TWO_EDGE (20)
 
 #define PLAN_STEP (1)
-#define MULTIREAD_SEARCH_NUM (10)
+#define MULTIREAD_SEARCH_NUM (20)
 #define MULTIREAD_JUDGE_LENGTH (32)
 
 #define FIRST_READ_CONSUME (64)

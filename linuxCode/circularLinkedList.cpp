@@ -1,21 +1,5 @@
 #include "circularLinkedList.h"
 
-LogStream& operator<<(LogStream& s, CircularSpacePiece& linkedList) {
-    const SpacePieceNode* node = linkedList.getHead();
-    const SpacePieceNode* head = linkedList.getHead();
-    s << "{" <<"totalSpace:"<< linkedList.getTolSpace()<<": " << *node << ",";
-    while (node->getNext() != head) {
-        node = node->getNext();
-        s << *node << ",";
-    }
-    s << "}\n";
-    return s;
-}
-
-LogStream& operator<<(LogStream& s, const SpacePieceNode& node) {
-    s << "(" << node.getStart() << "," << node.getLen() + node.getStart() - 1 << ")";
-    return s;
-}
 
 
 bool CircularSpacePiece::testMerge(Node* nodeAhead, int start, int len, bool allowOverlap){
@@ -51,8 +35,6 @@ bool CircularSpacePiece::testMerge(Node* nodeAhead, int start, int len, bool all
     }
     return false;
 }
-
-
 
 void CircularSpacePiece::dealloc(int start, int len) {
     if (start < 0 || start >= spaceSize || len <= 0) {
@@ -90,13 +72,12 @@ void CircularSpacePiece::dealloc(int start, int len) {
     tolSpace += len;
 }
 
-
 bool CircularSpacePiece::testAlloc(int start, int len){
         if (start < 0 || start >= spaceSize || len <= 0) {
             throw std::out_of_range("param out of range");
         }
-        LOG_LINKEDSPACE << "testAlloc:" << "(" << start << ", " << len << ")\n";
-        if (head == nullptr) {
+        LOG_LINKEDSPACE << "testAlloc:" << "(" << start << ", " << len <<")" << "\n";
+        if (head == nullptr) {//head是一个tag数长度的向量，如果某个tag没有被分配到该磁盘上，则为nullptr
             return false;
         } else{
             Node* nodeAhead = getAheadNode(start);

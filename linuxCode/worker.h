@@ -13,21 +13,20 @@
 //原先根本没有删除overtime的req（因为overtimeReqTop是0，指向已经被删除的请求。）！！所以就是在object规划时删除的。
 class Worker{//obj由它管理。
 public:
-    Worker(){
+    Worker(int tagNum):diskManager(tagNum){
         actionBuffer = (char*)malloc((G+10)*sizeof(char));
         memset(actionBuffer, '\0', (G+10)*sizeof(char));
     };
     //初始化磁盘
-    void initDisk(){
-        for(int i=0;i<N;i++){
-            LogFileManager::flushAll();
-            diskManager.addDisk(V);
-        }
+    void addDisk(std::vector<std::pair<int, int>>  tagToSpaceSize){
+        LogFileManager::flushAll();
+        diskManager.addDisk(V, tagToSpaceSize);
     }
     //接收头部统计数据
     void swallowStatistics(){
         int StaNum = (T - 1) / FRE_PER_SLICING + 1;
         int* start = (int*)malloc(3*M*StaNum*sizeof(int));
+        memset(start, 0, 3 * M * StaNum * sizeof(int));
         int** ptrStart = (int**)malloc(3*M*sizeof(int*));
         int* temp = start;
         for(int k=0;k<3;k++){
@@ -36,8 +35,8 @@ public:
                 temp = temp + StaNum;
             }
         }
+        //[M][StaNum]
         StatisticsBucket::initBuckData(ptrStart, ptrStart+M, ptrStart+2*M);
-
         for (int k=1; k <= 3; k++){
             for (int i = 1; i <= M; i++) {
                 for (int j = 1; j <= StaNum; j++) {
@@ -45,6 +44,90 @@ public:
                     start += 1;
                 }
             }
+        }
+        for (int i = 0; i < M; i++) {
+            for (int j = 0; j < StaNum; j++) {
+                LOG_IPCINFO << StatisticsBucket::reqSta[i][j];
+            }
+        }
+
+        int* tagObjects = new int[M+1];
+        int* tagDiskSize = new int[M];
+        int* tagLeftSize = new int[M];
+        tagObjects[M] = 0;
+        for(int i =0;i<M;i++){
+            tagObjects[i] = 0;
+            for (int j = 0; j < StaNum; j++) {
+                tagObjects[i] += StatisticsBucket::wrtSta[i][j] - StatisticsBucket::delSta[i][j];
+            }
+            tagObjects[M] += tagObjects[i];//总的对象数目。
+        }
+
+        //计算相关性
+        double* relativity = (double*)malloc(sizeof(double)*M*M);
+        for (int i = 0; i < M; i++) {
+            relativity[i * M + i] = 0;//请求总数。
+            for (int j = 0; j < StaNum; j++) {
+                relativity[i * M + i] += StatisticsBucket::reqSta[i][j];
+            }
+        }
+        for (int i1 = 0; i1 < M; i1++) {
+            for (int i2 = 0; i2 < i1; i2++) {
+                relativity[i1 * M + i2] = 0;
+                for (int j = 0; j < StaNum; j++) {
+                    relativity[i1 * M + i2] += 1.0* StatisticsBucket::reqSta[i1][j] * StatisticsBucket::reqSta[i2][j];
+                }
+                relativity[i1 * M + i2] /= (1.0 * relativity[i1 * M + i1] * relativity[i2 * M + i2]);
+                relativity[i2 * M + i1] = relativity[i1 * M + i2];
+            }
+        }
+
+        StatisticsBucket::initRelativity(relativity);
+        for (int i = 0; i < M; i++) {
+            for (int j = 0; j < M; j++) {
+                LOG_IPCINFO << relativity[i*M+j];
+            }
+        }
+
+        //确定每个tag将要分配的磁盘空间大小。
+        int tagNumPerDisk = ((M * 3 / N) / 2 + 1) * 2;//每个磁盘大概分配多少个tag
+        int unitLeft = 0;
+        for (int i = 0; i < M; i++) {
+            tagDiskSize[i] = N * V * tagObjects[i] / tagObjects[M];//某个tag在某个磁盘上应该分配多少空间。
+            tagLeftSize[i] = tagDiskSize[i];
+            unitLeft += tagDiskSize[i];
+        }
+        unitLeft = N * V - unitLeft; assert(unitLeft >= 0);
+        tagDiskSize[M - 1] += unitLeft;//所有的tagDiskSize加起来正好为所有单元大小。
+        tagLeftSize[M - 1] += tagDiskSize[M - 1];
+
+        //将tag两两分为一组。按每个tag的对象比例分配空间。如果tag数量为奇数呢？那就先找一个和其它tag相关性最高的tag。
+        std::vector<int> tagIn = {};
+        int tagStart = 0;
+        tagIn.push_back(tagStart);
+        for (int i = 0; i < M/2; i++) {
+            tagIn.push_back(StatisticsBucket::getMaxRltTag(tagIn.back(), tagIn));
+            for (int j = 0; j < M; j++) {
+                if (std::find(tagIn.begin(), tagIn.end(), j) == tagIn.end()) {
+                    tagIn.push_back(j);
+                    break;
+                }
+            }
+        }
+        tagIn.erase(tagIn.begin()); tagIn.push_back(0);//现在，第2、3个tag，4、5个tag...都有较高相关性。
+        //确定每种tag给每个磁盘的数量。
+        std::vector<std::vector<std::pair<int, int>>> diskTagSize;
+        for (int i = 0; i < N; i++) {
+            diskTagSize.push_back({});
+            int left = V;
+            for (int j = 0; j < M-1; j++) {
+                int tag = tagIn[j];
+                int tagSize = static_cast<int>(1.0 * V * tagObjects[tag] / tagObjects[M]);
+                left -= tagSize;
+                diskTagSize.back().push_back({ tag, tagSize });
+            }
+            diskTagSize.back().push_back({ tagIn[M - 1], left });
+            addDisk(diskTagSize.back());
         }
     }
     
@@ -91,7 +174,7 @@ public:
         //创建时间小于/等于OvertimeTimeBound的都过期了。
         while(requestsPtr[overtimeReqTop] != nullptr &&
             requestsPtr[overtimeReqTop]->createdTime <= OvertimeTimeBound){
-            if(requestsPtr[overtimeReqTop] != &deletedRequest){
+            if(requestsPtr[overtimeReqTop] != deletedRequest){
                 auto req = requestsPtr[overtimeReqTop];
                 //先消除obj的统计数据影响
                 auto obj = sObjectsPtr[req->objId];
@@ -109,7 +192,7 @@ public:
         //创建时间小于/等于phaseTwoTimeBound的都在下一帧phase2了。
         while(requestsPtr[phaseTwoTop] != nullptr
                 && requestsPtr[phaseTwoTop]->createdTime <= phaseTwoTimeBound){
-            if(requestsPtr[phaseTwoTop] != &deletedRequest){
+            if(requestsPtr[phaseTwoTop] != deletedRequest){
                 auto req = requestsPtr[phaseTwoTop];
                 auto obj = sObjectsPtr[req->objId];
                 //补上第二阶段的边缘。这一边缘还未用于更新。是下一个时间步的边缘（这个时间步在规划中使用它，很合理）
@@ -276,7 +359,7 @@ public:
         //跳移拼接算子：把跳的action处分开，然后拼接。
         //对象变副本算子：把对象副本放到规划少的磁头去读
         //单元变副本算子：把单元副本放到规划少的磁头去读
-        diskManager.multiReadStrategy();
+        diskManager.testMultiReadStrategy();
         
         std::vector<int> diskHeadPos;
         //输出读取过程。

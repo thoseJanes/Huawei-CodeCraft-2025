@@ -478,7 +478,7 @@ template<int SIZE>
 class BplusTree;
 
 template<int SIZE>
-inline LogStream& operator<<(LogStream& s, const BplusTree<SIZE>& v);
+LogStream& operator<<(LogStream& s, const BplusTree<SIZE>& v);
 
 
 
@@ -502,18 +502,21 @@ public:
         int pos = 0;
         LeafNode* node;
         bool end;
+        BplusTree<SIZE>* tree;
     public:
         Iterator():end(true){}
-        Iterator(LeafNode* node, int pos) :end(false) {
+        Iterator(BplusTree<SIZE>* tree, LeafNode* node, int pos) :end(false) {
             this->pos = pos;
             this->node = node;
             this->startKey = node->keys[pos];
+            this->tree = tree;
         }
-        Iterator(LeafNode* node, int pos, int startKey, bool end) {
+        Iterator(BplusTree<SIZE>* tree, LeafNode* node, int pos, int startKey, bool end) {
             this->pos = pos;
             this->node = node;
             this->startKey = startKey;
             this->end = end;
+            this->tree = tree;
         }
         int getKey() {
             if (this->end) {
@@ -554,34 +557,77 @@ public:
                 return Iterator();
             }
             else {
-                return Iterator(node, pos, this->startKey, end);
+                return Iterator(tree, node, pos, this->startKey, end);
             }
         }
         bool isEnd() {
             return end;
         }
         int getStartKey() { return this->startKey; }
-        //iterator next() {
-        //    if (isEnd) {
-        //        return;
-        //    }
-        //    if (anchor.node->keyNum - 1 > anchor.pos) {
-        //        anchor.pos += 1;
-        //    }
-        //    else {
-        //        anchor.node = anchor.node->next;
-        //        anchor.pos = 0;
-        //    }
-        //    if (getKey() == startKey) {
-        //        isEnd = true;
-        //    }
-        //    return *this;
-        //}
-        
+        Iterator& toNoLessThan(int key) {
+            Iterator tempIter = tree->iteratorAt(key);
+            int reqKey = tempIter.getKey();
+            while ((!this->isEnd()) && this->getKey() != reqKey) {
+                this->toNext();
+            }
+            return *this;
+        }
         //public:
         //    //有风险，它无法保证插入或者删除节点之后内部保存的节点还有效
         //    //可以把Anchor存在该对象中来保证，如果插入或者删除了节点就把Anchor内部参数置为无效?
         //    Anchor(LeafNode* n, int p) :pos(p) { node = *n; }
+    };
+
+    struct Anchor {
+    private:
+        int leftKey = 0;
+        int pos = 0;
+        LeafNode* node;
+        BplusTree<SIZE>* tree;
+    public:
+        Anchor(BplusTree<SIZE>* tree, LeafNode* node, int pos, int keyNum) :leftKey(keyNum),tree(tree) {
+            this->pos = pos;
+            this->node = node;
+        }
+        int getKey() {
+            if (this->leftKey<=0) {
+                throw std::out_of_range("is end!");
+            };
+            return this->node->keys[this->pos];
+        }
+        Anchor& toNext() {
+            if (this->leftKey==0) {
+                return *this;
+            }
+            if (this->node->keyNum - 1 > this->pos) {
+                this->pos += 1;
+            }
+            else {
+                this->node = this->node->next;
+                this->pos = 0;
+            }
+            this->leftKey--;
+            return *this;
+        }
+        Anchor getNext() {
+            if (this->leftKey==0) {
+                throw std::logic_error("has to end");
+            }
+            Anchor newAnchor = *this;//应该是复制操作，这里是否复制了呢？
+            newAnchor.toNext();
+            return newAnchor;
+        }
+        bool isEnd() {
+            return this->leftKey==0;
+        }
+        Anchor& toNoLessThan(int key) {
+            Anchor tempIter = tree->anchorAt(key);
+            int reqKey = tempIter.getKey();
+            while ((!this->isEnd()) && this->getKey() != reqKey) {
+                this->toNext();
+            }
+            return *this;
+        }
     };
     int id;//用于log
     BplusTree() :root(new InnerNode()), keyNum(0) {
@@ -792,7 +838,7 @@ public:
                 if (setHead) {
                     head = static_cast<LeafNode*>(node)->next;
                 }
-                return Iterator(static_cast<LeafNode*>(node)->next, 0);
+                return Iterator(this, static_cast<LeafNode*>(node)->next, 0);
             }
             else {
                 node = static_cast<InnerNode*>(node)->children[pos];
@@ -802,9 +848,34 @@ public:
         if (setHead) {
             head = static_cast<LeafNode*>(node);
         }
-        return Iterator(static_cast<LeafNode*>(node), pos);
+        return Iterator(this,static_cast<LeafNode*>(node), pos);
+    }
+    Anchor anchorAt(int key) {
+        if (head == nullptr) {
+            assert(this->keyNum == 0);
+            return Anchor(this, nullptr, 0, 0);
+        }
+        //找到叶子节点
+        Node* node = root;
+        int pos;
+        while (!node->isLeaf) {
+            pos = node->searchKey(key);
+            if (pos == node->keyNum) {//如果pos比当前最大的还要大。
+                while (!node->isLeaf) {
+                    //直接搜索当前节点的最大值节点。
+                    node = static_cast<InnerNode*>(node)->children[node->keyNum - 1];
+                }
+                return Anchor(this, static_cast<LeafNode*>(node)->next, 0, this->keyNum);
+            }
+            else {
+                node = static_cast<InnerNode*>(node)->children[pos];
+            }
+        }
+        pos = node->searchKey(key);
+        return Anchor(this, static_cast<LeafNode*>(node), pos, this->keyNum);
     }
     const InnerNode* getRoot() { return this->root; }
+
 };
 
 

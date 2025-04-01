@@ -2,32 +2,33 @@
 #define HEADPLANNER_H
 
 #include "disk.h"
+#include "common.h"
+
+class ActionNode;
+class HeadPlanner;
+LogStream& operator<<(LogStream& s, const ActionNode& actionNode);
+LogStream& operator<<(LogStream& s, HeadPlanner& headPlanner);
+
 
 struct ActionNode {
     HeadOperator action;
     int endPos;
     int endTokens;
 };
-
-inline LogStream& operator<<(LogStream& s, const ActionNode& actionNode) {
-    s << "\n[" << actionNode.action << "--" <<
-        ",  finishPos:" << actionNode.endPos <<
-        ",  endTokens:" << actionNode.endTokens << "]";
-    return s;
-}
-
+class DiskProcessor;
 class HeadPlanner {//全局plan，其中的tokens为全局tokens。
 private:
     friend LogStream& operator<<(LogStream& s, HeadPlanner& headPlanner);
-    int spaceSize;
-    Disk* disk;//保持对disk的引用。
-    //应该存入绝对tokens数。
+    //保持对disk的引用。
+    Disk* disk;
+    //分支树
     std::map<int, std::pair<std::list<ActionNode>::iterator, HeadPlanner*>> readBranches = {};
     //分支行动。分别为：增加读的位置/创建分支的位置/分支策略。
-    int diskId;
     //三元组<HeadOperator, int, int>:磁头操作/操作结束位置/操作结束时间。
     std::list<ActionNode> actionNodes = {};//第零个是起始node。
-
+public:
+    const int spaceSize;
+    const int diskId;
 
     // HeadPlanner(int readConsume, int headpos, int spacesize):
     //     nextReadConsume(readConsume), orgHeadPos(headpos), spaceSize(spacesize){}
@@ -86,28 +87,20 @@ public:
             appendAction(operation);
         }
     }
-    int getAheadReadAfter(const ActionNode& lastNode) {
-        int aheadRead = 0;
-        if (lastNode.action.action == READ || lastNode.action.action == VREAD) {
-            aheadRead = lastNode.action.aheadRead + 1;
-        }
-        else if (lastNode.action.action == START) {
-            aheadRead = lastNode.action.aheadRead;
-        }
-        return aheadRead;
-    }
-
-    //单纯地加入一个行动，并且计算这个行动的新位置、新代价。
-    void appendAction(const HeadOperator& operation, bool ignoreAheadRead = false) {
+    
+    /// @brief 规划一个磁头行动，会自动计算连读信息、行动结束时的tokens花费和磁头位置
+    /// @param operation 提供的磁头行动
+    /// @param ignoreAheadReadNum 如果提供的磁头行动是READ，是否不检查READ的连读次数正确性
+    void appendAction(const HeadOperator& operation, bool ignoreAheadReadNum = false) {
         LOG_PLANNERN(this->diskId) << "append action " << operation;
         if (this->readBranches.size()) {
             std::logic_error("should not append when has branch");
         }
         auto action = operation.action;
         if (action == READ||action == VREAD) {//对于READ操作
-            int aheadRead = getAheadReadAfter(getLastActionNode());
+            int aheadRead = getAheadReadNum(getLastActionNode());
 
-            if (operation.aheadRead != -1 && (!ignoreAheadRead)) {
+            if (operation.aheadRead != -1 && (!ignoreAheadReadNum)) {
                 assert(operation.aheadRead == aheadRead);
             }
             this->pushBackActionNode({ action, aheadRead }, 1, true,
@@ -130,7 +123,76 @@ public:
         }
 
     }
-    //该函数具有规划的性质，会判断如何到达reqUnit
+    /// @brief 放入一个行动节点
+    /// @param operation 行动类型及对应行动参数
+    /// @param posValue 位置参数
+    /// @param isOffset 是否是偏移位置。对于JUMP而言，需要设置为false
+    /// @param costValue 花费的Tokens
+    /// @param divisible 行动相对于花费的Tokens是否可分。对于PASS而言，可分。
+    void pushBackActionNode(const HeadOperator& operation, int posValue, bool isOffset, int costValue, bool divisible) {
+        auto lastNode = getLastActionNode();
+        int newCost = calNewTokensCost(lastNode.endTokens, costValue, divisible);
+        int newPos = calNewHeadPos(lastNode.endPos, posValue, isOffset, this->spaceSize);
+        actionNodes.push_back({ operation, newPos, newCost });
+        LOG_PLANNERN(diskId) << "push back node " << actionNodes.back();
+    }
+    /// @brief 获取前面连读的次数。对于READ而言，为上一次的前置连读+1，对于头节点而言，就是头节点的前置连读。
+    /// @param lastNode 上一个规划节点
+    /// @return 前置连读次数
+    int getAheadReadNum(const ActionNode& lastNode) {
+        int aheadRead = 0;
+        if (lastNode.action.action == READ || lastNode.action.action == VREAD) {
+            aheadRead = lastNode.action.aheadRead + 1;
+        }
+        else if (lastNode.action.action == START) {
+            aheadRead = lastNode.action.aheadRead;
+        }
+        return aheadRead;
+    }
+
+    /// @brief 规划移动到某个位置并进行有效读
+    /// @param unitPos 读的位置
+    void appendMoveToUnplannedReadAndPlan(int unitPos) {
+        auto unitInfo = this->disk->getUnitInfo(unitPos);
+        auto obj = sObjectsPtr[unitInfo.objId];
+        if (!obj->isPlaned(unitInfo.untId) && obj->isRequested(unitInfo.untId) ) {
+            appendMoveTo(unitPos);
+            appendAction({ READ, -1 });
+            obj->plan(unitInfo.untId, this->diskId, this->getLastActionNode().endTokens, false);
+        }
+        else {
+            //appendMoveTo(unitPos);
+            //appendAction({ READ, -1 });
+            throw std::logic_error("this unit can not be planned!");
+        }
+    }
+    /// @brief 规划移动到某个位置并进行有效或无效读，读的类型由函数根据object判断。
+    /// @param unitPos 读的位置
+    void appendMoveToAllReadAndPlan(int unitPos) {
+        auto unitInfo = this->disk->getUnitInfo(unitPos);
+        if (unitInfo.objId < 0) {
+            appendMoveTo(unitPos);
+            appendAction({ VREAD, -1 });
+            return;
+        }
+        auto obj = sObjectsPtr[unitInfo.objId];
+        if (obj!=deletedObject && !obj->isPlaned(unitInfo.untId) && obj->isRequested(unitInfo.untId)) {
+            appendMoveTo(unitPos);
+            appendAction({ READ, -1 });
+            obj->plan(unitInfo.untId, this->diskId, Watch::toTimeStep(this->getLastActionNode().endTokens), false);
+        }
+        else {
+            appendMoveTo(unitPos);
+            appendAction({ VREAD, -1 });
+            //appendMoveTo(unitPos);
+            //appendAction({ VREAD, -1 });
+        }
+    }
+    /// @brief 规划移动到某个位置。如果尝试进行读来移动，需要提供磁头之后的行为信息。
+    /// @param unitPos 移动到的位置
+    /// @param tryToRead 是否尝试进行无效读来移动磁头（优化方向：可以全设置为有效读，重点在于得同时设置对象的planed属性，在特定情况下可以优化开销）
+    /// @param actionIt 磁头之后的行为起始处迭代器
+    /// @param endIt 磁头之后的行为结束处迭代器
     void appendMoveTo(int unitPos, bool tryToRead = false, 
         std::list<ActionNode>::iterator* actionIt=nullptr, 
         std::list<ActionNode>::iterator* endIt = nullptr) {
@@ -199,43 +261,11 @@ public:
             return;//就在当前位置。
         }
     }
-    void appendMoveToUnplannedReadAndPlan(int unitPos) {
-        auto unitInfo = this->disk->getUnitInfo(unitPos);
-        auto obj = sObjectsPtr[unitInfo.objId];
-        if (!obj->isPlaned(unitInfo.untId) && obj->isRequested(unitInfo.untId) ) {
-            appendMoveTo(unitPos);
-            appendAction({ READ, -1 });
-            obj->plan(unitInfo.untId, this->diskId, this->getLastActionNode().endTokens, false);
-        }
-        else {
-            //appendMoveTo(unitPos);
-            //appendAction({ READ, -1 });
-            throw std::logic_error("this unit can not be planned!");
-        }
-    }
-    void appendMoveToAllReadAndPlan(int unitPos) {
-        auto unitInfo = this->disk->getUnitInfo(unitPos);
-        auto obj = sObjectsPtr[unitInfo.objId];
-        if (!obj->isPlaned(unitInfo.untId) && obj->isRequested(unitInfo.untId)) {
-            appendMoveTo(unitPos);
-            appendAction({ READ, -1 });
-            obj->plan(unitInfo.untId, this->diskId, this->getLastActionNode().endTokens, false);
-        }
-        else {
-            appendMoveTo(unitPos);
-            appendAction({ VREAD, -1 });
-            //appendMoveTo(unitPos);
-            //appendAction({ VREAD, -1 });
-        }
-    }
-
-    void pushBackActionNode(const HeadOperator& operation, int posValue, bool isOffset, int costValue, bool divisible) {
-        auto lastNode = getLastActionNode();
-        int newCost = calNewTokensCost(lastNode.endTokens, costValue, divisible);
-        int newPos = calNewHeadPos(lastNode.endPos, posValue, isOffset);
-        actionNodes.push_back({ operation, newPos, newCost });
-        LOG_PLANNERN(diskId) << "push back node " << actionNodes.back();
-    }
+    
+    // int getTokenCost(){return tokenCost;}
+    // int getTimeCost(){return timeCost;}
+    // int getNextReadConsume(){return nextReadConsume;}
+    // std::vector<std::pair<HeadAction, int>> getActions(){return actions;}
 
     //规划性质：插入读操作，策略为选择最近插入位置。
     void insertUnplannedReadAsBranch(int unitPos, int* getReadOverTokens, int* getScoreLoss) {
@@ -289,42 +319,6 @@ public:
         }
         //向后移动看看能不能改进总价值?
     }
-    void cancelRead(int unitPos) {
-        LOG_PLANNERN(diskId) << "cancel read " << unitPos;
-        ActionNode node;
-        auto it = std::next(this->actionNodes.begin());
-        int unitEnd = (unitPos + 1 + spaceSize) % spaceSize;
-        while(it!=actionNodes.end()) {
-            if (((*it).action.action == READ|| (*it).action.action == VREAD) && (*it).endPos == unitEnd) {
-                break;
-            }
-            it++;
-        }
-        if (it == actionNodes.end()) {
-            throw std::logic_error("error! can't find read!!");
-        }
-        //it为需要删除的节点。
-        std::list<ActionNode> tempNodes = {};
-        it = actionNodes.erase(it);
-        tempNodes.splice(tempNodes.begin(), actionNodes, it, actionNodes.end());
-        
-        //删除read之前的移动操作
-        it = actionNodes.end(); it--;
-        while (((*it).action.action != READ && (*it).action.action != VREAD) && (*it).action.action != START) {
-            it = actionNodes.erase(it);
-            it--;
-        }
-        //更新后面的节点
-        it = tempNodes.begin();
-        auto endIt = tempNodes.end();
-        while (it != endIt) {
-            if ((*it).action.action == READ || (*it).action.action == VREAD) {
-                appendMoveTo(((*it).endPos - 1+spaceSize)%spaceSize, true, &it, &endIt);
-                appendAction((*it).action, true);
-            }
-            it++;
-        }
-    }
     //用分支修改主干,会更新planed值。
     void mergeUnplannedReadBranch(int unitPos) {
         LOG_PLANNERN(diskId) << "\nmerge branch on reading "<<unitPos;
@@ -361,80 +355,49 @@ public:
         this->readBranches.erase(unitPos);
         delete branchInfo.second;
     }
-
-    int getDistance(int target, int from) {
-        return (target - from + spaceSize) % spaceSize;
-    }
-    //返回最小距离处的前一个节点。该节点执行完毕后即为最小距离。
-    std::list<ActionNode>::iterator getShortestDistance(int target, int* getDist) {
-        auto aheadIt = this->actionNodes.begin();
-        *getDist = getDistance(target, (*aheadIt).endPos);
-        int pos; int dist;
-        for (auto it = std::next(aheadIt, 1); it != this->actionNodes.end(); it++) {
-            pos = (*it).endPos;
-            //找一个最小的位置。或者找一个在jump之前的位置。注意jump之后就应该plan这个read，防止多个jump到一个地方。
-            dist = getDistance(target, pos);
-            if (dist < *getDist) {
-                *getDist = dist;
-                aheadIt = it;//在谁之后插入。
+    
+    
+    /// @brief 取消特定的有效读操作，并将该读替换为移动/跳/无效读
+    /// @param unitPos 
+    void cancelRead(int unitPos) {
+        LOG_PLANNERN(diskId) << "cancel read " << unitPos;
+        ActionNode node;
+        auto it = std::next(this->actionNodes.begin());
+        int unitEnd = (unitPos + 1 + spaceSize) % spaceSize;
+        while(it!=actionNodes.end()) {
+            if (((*it).action.action == READ|| (*it).action.action == VREAD) && (*it).endPos == unitEnd) {
+                break;
             }
+            it++;
         }
-        return aheadIt;
-    }
-
-    void test_syncWithHeadTest() const {
-        if (this->actionNodes.front().endPos != this->disk->head.headPos) {
-            std::logic_error("the planner status not sync with head!!!");
+        if (it == actionNodes.end()) {
+            throw std::logic_error("error! can't find read!!");
         }
-    }
-    void test_nodeContinuousTest() const {
-        HeadPlanner* testPlanner = new HeadPlanner(disk, this->actionNodes.front());
-        LOG_PLANNERN(diskId) << "testContinuous test begin";
-        for (auto it = std::next(actionNodes.begin(), 1); it != actionNodes.end(); it++) {
-            testPlanner->appendAction((*it).action);
-            auto testNode = testPlanner->getLastActionNode();
-            assert(testNode.endPos == (*it).endPos);
-            //assert(testNode.endTokens == (*it).endTokens);tokens不一定连着
-            assert(testNode.action.param == (*it).action.param);
+        //it为需要删除的节点。
+        std::list<ActionNode> tempNodes = {};
+        it = actionNodes.erase(it);
+        tempNodes.splice(tempNodes.begin(), actionNodes, it, actionNodes.end());
+        
+        //删除read之前的移动操作
+        it = actionNodes.end(); it--;
+        while (((*it).action.action != READ && (*it).action.action != VREAD) && (*it).action.action != START) {
+            it = actionNodes.erase(it);
+            it--;
         }
-        LOG_PLANNERN(diskId) << "testContinuous test over";
-        delete testPlanner;
-    }
-    void test_branchAndMainConsistency() const {
-
-    }
-
-    int calNewTokensCost(int lastTokenCost, int value, bool divisible) {
-        if (Watch::toTimeStep(lastTokenCost) < Watch::getTime()) {
-            lastTokenCost = (Watch::getTime()-1) * G;
-        }
-        if (divisible) {
-            return lastTokenCost + value;
-        }
-        else {
-            int tolTokens = lastTokenCost;
-            if ((tolTokens + value - 1) / G == tolTokens / G + 1) {//如果操作跨回合了。
-                tolTokens = (tolTokens / G + 1) * G;//跳到回合开始处。
+        //更新后面的节点
+        it = tempNodes.begin();
+        auto endIt = tempNodes.end();
+        while (it != endIt) {
+            if ((*it).action.action == READ || (*it).action.action == VREAD) {
+                appendMoveTo(((*it).endPos - 1+spaceSize)%spaceSize, true, &it, &endIt);
+                appendAction((*it).action, true);
             }
-            tolTokens += value;
-            return tolTokens;
+            it++;
         }
     }
-    int calNewHeadPos(int lastHeadPos, int value, bool isOffset) {
-        if (isOffset) {
-            return (lastHeadPos + value) % spaceSize;
-        }
-        else {
-            return value;
-        }
-    }
-    // int getTokenCost(){return tokenCost;}
-    // int getTimeCost(){return timeCost;}
-    // int getNextReadConsume(){return nextReadConsume;}
-    // std::vector<std::pair<HeadAction, int>> getActions(){return actions;}
+    
 
     //更新内部状态
-
     /// @brief 更新内部状态。从链表头部吐出pumpSize个节点，并更新初始位置和花费。
     /// @param pumpSize 吐出的节点数量
     /// @param recLst 用于接收节点的链表
@@ -452,6 +415,9 @@ public:
         recLst.splice(recLst.end(), this->actionNodes,
             std::next(this->actionNodes.begin(), 1), lastIt);
     }
+    /// @brief 执行当前时间步内的行动
+    /// @param handledOperation 用来接收执行的行动
+    /// @param completedRead 用来接收完成的读操作
     void excutePresentTimeStep(std::vector<HeadOperator>* handledOperation, std::vector<int>* completedRead) {
         DiskHead& head = this->disk->head;
         auto lastIt = actionNodes.begin();
@@ -500,6 +466,45 @@ public:
     }
     const Disk* getDisk() const { return this->disk; }
 
+    //返回最小距离处的前一个节点。该节点执行完毕后即为最小距离。
+    std::list<ActionNode>::iterator getShortestDistance(int target, int* getDist) {
+        auto aheadIt = this->actionNodes.begin();
+        *getDist = getDistance(target, (*aheadIt).endPos, this->spaceSize);
+        int pos; int dist;
+        for (auto it = std::next(aheadIt, 1); it != this->actionNodes.end(); it++) {
+            pos = (*it).endPos;
+            //找一个最小的位置。或者找一个在jump之前的位置。注意jump之后就应该plan这个read，防止多个jump到一个地方。
+            dist = getDistance(target, pos, this->spaceSize);
+            if (dist < *getDist) {
+                *getDist = dist;
+                aheadIt = it;//在谁之后插入。
+            }
+        }
+        return aheadIt;
+    }
+    
+    void test_syncWithHeadTest() const {
+        if (this->actionNodes.front().endPos != this->disk->head.headPos) {
+            std::logic_error("the planner status not sync with head!!!");
+        }
+    }
+    void test_nodeContinuousTest() const {
+        HeadPlanner* testPlanner = new HeadPlanner(disk, this->actionNodes.front());
+        LOG_PLANNERN(diskId) << "testContinuous test begin";
+        for (auto it = std::next(actionNodes.begin(), 1); it != actionNodes.end(); it++) {
+            testPlanner->appendAction((*it).action);
+            auto testNode = testPlanner->getLastActionNode();
+            assert(testNode.endPos == (*it).endPos);
+            //assert(testNode.endTokens == (*it).endTokens);tokens不一定连着
+            assert(testNode.action.param == (*it).action.param);
+        }
+        LOG_PLANNERN(diskId) << "testContinuous test over";
+        delete testPlanner;
+    }
+    void test_branchAndMainConsistency() const {
+
+    }
+
     ~HeadPlanner() {
         for (auto it = this->readBranches.begin(); it != this->readBranches.end(); it++) {
             delete (*it).second.second;//删除除了当前分支外的所有分支
@@ -507,17 +512,7 @@ public:
     }
 };
 
-inline LogStream& operator<<(LogStream& s, HeadPlanner& headPlanner) {
-    s << "\n";
-    s << "diskId:" << headPlanner.diskId << " ";
-    s << "spaceSize:" << headPlanner.spaceSize << "\n";
-    s << "(actions,topos,endTokens):\n{";
-    for (auto it = headPlanner.actionNodes.begin(); it != headPlanner.actionNodes.end(); it++) {
-        s << "" << *it << ", ";
-    }
-    s << "}\n";
-    return s;
-}
+
 
 
 #endif

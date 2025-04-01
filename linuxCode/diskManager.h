@@ -1,14 +1,20 @@
 ﻿#ifndef DISKMANAGER_H
 #define DISKMANAGER_H
+#include <set>
 #include "disk.h"
 #include "headPlanner.h"
 
 typedef BplusTree<4> BpTree;
+struct ReadProfitInfo {
+    int score = 0;
+    int edge = 0;
+    int reqNum = 0;
+    int tokensCost = 0;
+};
 
 class DiskProcessor{
     public:
         Disk* disk;//其中的磁头用于严格执行并返回信息。
-
         BpTree reqSpace;//请求单元组成的B+树
         HeadPlanner* planner;//优化用磁头规划器，用于临时规划
         std::vector<HeadOperator> handledOperations = {};//已经开始处理的动作，作为输出到判题器的参数。
@@ -19,315 +25,112 @@ class DiskProcessor{
             LOG_DISK << "create diskPcs";
         };
         
-        // //行为策略。单步规划。
-        // bool toReqUnit(HeadPlanner& headPlanner, int reqUnit){
-        //     LOG_ACTIONSN(headPlanner.diskId) << "plan to reqUnit:" << reqUnit;
-        //     int distance = disk->getDistance(reqUnit, headPlanner.getLastHeadPos());//choseRep已经算过了一遍，这里再算一遍？！
-            
-        //     if(distance){
-        //         if(distance <= disk->head.presentTokens){
-        //             //如果可以直接移动到目标位置。
-        //             headPlanner.freshActionsInfo(HeadOperator{PASS, distance});
-        //             return true;//当前时间帧还有可能可以读
-        //             //也可以试试能不能连读过去（节省时间），这取决于下面有多少单元，能否节省总开销。
-        //         }else if(disk->head.presentTokens == G){
-        //             //当前还有G个Token，即上一时间步的操作没有延续到当前时间步。可以直接跳过去。
-        //             headPlanner.freshActionsInfo(HeadOperator{JUMP, reqUnit});
-        //             return false;//当前时间帧无法读了。
-        //         }else if(disk->head.presentTokens + G > distance){
-        //             //如果当前时间步的令牌数不够跳，且这个时间步+下个时间步能够移动到目标位置，
-        //             //那么先向目标位置移动
-        //             headPlanner.freshActionsInfo(HeadOperator{PASS, disk->head.presentTokens});
-        //             return false;//当前时间帧无法读了。
-        //         }else{
-        //             //最早也得下两个回合才能到达读位置。
-        //             //可以视情况做一些有益的策略。（如移动到下回合更可能有请求的位置。
-        //             //也可以不行动。
-        //             return false;
-        //         }
-        //     }else{
-        //         return true;//当前就在这个位置。
-        //     }
-        // }
-
         
-        //判断是否能够连读。如果能，则连读。
-        //该函数可以找到不同位置开始的较长的连读段。适合jump时使用。
-        bool planMultiRead(HeadPlanner& headPlanner) {//每次选择一个请求单元最多的开始规划？
-            int searchNum = 0;
-            auto iter = getReqUnitIteratorUnplanedAt(headPlanner.getLastActionNode().endPos);
-            if (iter.isEnd()) { return false; }
-            std::vector<std::pair<int, int>> readBlocks = {};
-
-            int startReqUnit = iter.getKey();
-            if (headPlanner.getDistance(startReqUnit, headPlanner.getLastActionNode().endPos) >= G) {
-                int reqUnit = startReqUnit;//第一个请求位置
-                double maxProfit = 0;
-                double tempProfit = 0;
-                while (true) {//对于跳读而言，找到一个最长的读，然后从此处开始判断是否连读。
-                    std::vector<std::pair<int, int>> tempReadBlocks = {};
-                    auto info = getReadProfitUntilJump(headPlanner, reqUnit, tempReadBlocks);
-                    tempProfit = info.first*1.0 / info.second;
-                    int nextStart = (tempReadBlocks.back().second + tempReadBlocks.back().first) % this->disk->spaceSize;
-                    if(maxProfit < tempProfit){
-                        readBlocks = std::move(tempReadBlocks);
-                        maxProfit = tempProfit;
+        class ReqIterator {
+            BpTree::Anchor iterator;
+            Disk* disk;
+        public:
+            ReqIterator(BpTree::Anchor iterator, Disk* disk) :disk(disk), iterator(iterator) {}
+            int getNextRequestUnit(bool toNext = true) {
+                if (not toNext) {
+                    auto it = iterator.getNext();
+                    if (!it.isEnd()) {
+                        return it.getKey();
                     }
-                    if (++searchNum >= MULTIREAD_SEARCH_NUM) {
-                        break;
-                    }
-                    iter = getReqUnitIteratorUnplanedAt(nextStart);
-                    if (iter.isEnd()) { throw std::logic_error("既然已经进入了循环，iter就不会到end"); }
-                    reqUnit = iter.getKey();//获取下一个未规划的单元。
-                    if (startReqUnit == reqUnit) {//如果转了一圈
-                        break;
-                    }
+                    return -1;
                 }
-            }
-            else {//判断是继续读还是直接跳。
-                int passTokens = headPlanner.getDistance(startReqUnit, headPlanner.getLastActionNode().endPos);
-                auto passProfitInfo = getReadProfitUntilJump(headPlanner, startReqUnit, readBlocks);
-
-                int nextReqUnit = readBlocks.back().first + readBlocks.back().second;
-                auto iter = getReqUnitIteratorUnplanedAt(nextReqUnit);
-                //检查跳是否能取得更高收益。
-                int reqUnit = iter.getKey();
-                int maxProfit = 0;
-                while (true) {//对于跳读而言，找到一个最长的读，然后从此处开始判断是否连读。
-                    std::vector<std::pair<int, int>> tempReadBlocks = {};
-                    auto info = getReadProfitUntilJump(headPlanner, reqUnit, tempReadBlocks);
-                    int passLoss = passProfitInfo.first * passTokens + info.first * (passTokens + passProfitInfo.second + G);
-                    int jumpLoss = G * info.first + (2 * G + info.second) * passProfitInfo.first;
-                    int nextStart = (tempReadBlocks.back().second + tempReadBlocks.back().first) % this->disk->spaceSize;
-                    if (passLoss - jumpLoss > maxProfit) {
-                        maxProfit = passLoss - jumpLoss;
-                        readBlocks = std::move(tempReadBlocks);
-                    }
-                    if (++searchNum >= MULTIREAD_SEARCH_NUM) {
-                        break;
-                    }
-                    iter = getReqUnitIteratorUnplanedAt(nextStart);
-                    if (iter.isEnd()) { throw std::logic_error("既然已经进入了循环，iter就不会到end"); }
-                    reqUnit = iter.getKey();//获取下一个未规划的单元。
-                    if (nextReqUnit == reqUnit) {//如果转了一圈
-                        break;
-                    }
+                iterator.toNext();
+                if (!iterator.isEnd()) {
+                    return iterator.getKey();
                 }
+                return -1;
             }
-            
-            
-            headPlanner.appendMoveTo(readBlocks.front().first);
-            LOG_PLANNERN(headPlanner.getDiskId()) << "\nbefore add, planner:" << headPlanner;
-            LOG_PLANNER << "planner " << this->disk->diskId << " " << headPlanner.getDiskId() <<" planning ";
-            for (int k = 0; k < readBlocks.size(); k++) {
-                int start = readBlocks[k].first;
-                //但是只把当前时间步相关的行动入栈并等待执行。
-                if (Watch::toTimeStep(headPlanner.getLastActionNode().endTokens) <= Watch::getTime()) {
-                    //以readBlock为单元加入读。
-                    for (int j = 0; j < readBlocks[k].second; j++) {
-                        headPlanner.appendMoveToAllReadAndPlan((start + j) % disk->spaceSize);
-                        LOG_PLANNER  << " plan for unit "
-                            << (start + j) % disk->spaceSize;
-                        LOG_PLANNERN(headPlanner.getDiskId()) << " plan for unit "
-                            << (start + j) % disk->spaceSize;
-                    }
+            void toNextUnplanedReqUnit() {
+                iterator.toNext();
+                if (iterator.isEnd()) {
+                    return;
                 }
-                else {
-                    for (int j = 0; j < readBlocks[k].second; j++) {
-                        auto info = disk->getUnitInfo((start + j) % disk->spaceSize);
-                        auto obj = sObjectsPtr[info.objId];
-                        obj->plan(info.untId, disk->diskId);//为当前时间步规划。防止其它磁盘也用到该磁盘现在规划的单元。
-                        LOG_OBJECT << "obj " << obj->objId << " plan for unit " 
-                            << info.untId << " in pos " << (start + j) % disk->spaceSize << " on disk " << this->disk->diskId;
-                        LOG_PLANNER << "obj " << obj->objId << " plan for unit "
-                            << info.untId << " in pos " << (start + j) % disk->spaceSize << " on disk " << this->disk->diskId;
-                    }
-                }
-            }//也可以直接执行，然后清除未执行完的内容，防止plan的麻烦。
-            LOG_PLANNERN(headPlanner.getDiskId()) << "after add, planner:" << headPlanner;
-            return true;
-        }
-        
-        //profit用请求数来计算？还是用分数来计算？先用请求数试试。
-        //返回{ tolReqNum , tolTokensCost }。计算了移动到第一个起始请求的花费。
-        int getMultiReadBlock(int reqUnit, int* getReqNum, int* getTokensCost) {
-            int tempPos = reqUnit;
-
-            int readLength = 0;
-            int tolMultiReadLen = 0;
-            int tolValidReqNum = 0;
-            int tolTokensCost = 0;
-            int tolScore = 0;
-            int maxMultiReadBlockLength = 0;
-            int maxMultiReadValidLength = 0;
-            int maxMultiReadValidReqNum = 0;
-            int maxMultiReadTokensCost = 0;
-            DiskUnit unitInfo = this->disk->getUnitInfo(tempPos);
-            Object* obj = sObjectsPtr[unitInfo.objId];
-            int multiReadTokensProfit = 0;
-            int multiReadLen = 0;
-            
-            int invalidReadLen = 0;
-            bool lastJudgeRead = false;
-            
-            while (invalidReadLen < 8) {//从tempPos开始，是否可以读原本不需要读的块来获取收益。
-                readLength++;
-                if (obj != &deletedObject && obj != nullptr &&//该处有对象且未被删除
-                    obj->unitReqNum[unitInfo.untId] > 0 && //判断是否有请求
-                    (!obj->isPlaned(unitInfo.untId))) {
-                    lastJudgeRead = true;
-                    tolTokensCost += getReadConsumeAfterN(readLength-1);
-                    tolValidReqNum += obj->unitReqNum[unitInfo.untId];
-                    tolMultiReadLen++;
-                    multiReadLen++;
-                    invalidReadLen = 0;
-
-                    multiReadTokensProfit = std::min(0, 
-                        multiReadTokensProfit
-                        + getReadConsumeAfterN(multiReadLen)
-                        - getReadConsumeAfterN(readLength));
-                }
-                else {
-                    lastJudgeRead = false;
-                    tolTokensCost += getReadConsumeAfterN(multiReadLen-1);
-                    invalidReadLen++;
-                    multiReadLen = 0;
-                    
-                    multiReadTokensProfit =
-                        multiReadTokensProfit
-                        - getReadConsumeAfterN(readLength) + 1;
-                }
-                if (multiReadTokensProfit >= 0) {//没有连读损耗
-                    
-                    maxMultiReadBlockLength = readLength;//那么就连读到该位置。
-                    maxMultiReadValidLength = tolMultiReadLen;
-                    maxMultiReadValidReqNum = tolValidReqNum;
-                    maxMultiReadTokensCost = tolTokensCost;
-                }
-                tempPos = (tempPos + 1) % this->disk->spaceSize; //查看下一个位置是否未被规划。
-                unitInfo = this->disk->getUnitInfo(tempPos);
-                obj = sObjectsPtr[unitInfo.objId];
-            }
-            
-            *getReqNum = maxMultiReadValidReqNum;
-            *getTokensCost = maxMultiReadTokensCost;
-            return maxMultiReadBlockLength;
-        }
-        std::pair<int,int> getReadProfitUntilJump(HeadPlanner& headPlanner, int start,
-                std::vector<std::pair<int,int>>& readBlocks) {
-            int tolReqNum = 0; int tolTokensCost = 0;
-            auto iter = getReqUnitIteratorUnplanedAt(start);
-            if (iter.isEnd()) { return {0, 1}; }
-            int cost = headPlanner.getDistance(iter.getKey(), start); assert(cost == 0);
-            while (!iter.isEnd() && 
-                    headPlanner.getDistance(iter.getKey(), start) < G &&
-                    readBlocks.size() <= 20) {
-                tolTokensCost += headPlanner.getDistance(iter.getKey(), start);//加上pass的距离。
-                int reqNum = 0; int tokensCost = 0;
-                int length = getMultiReadBlock(iter.getKey(), &reqNum, &tokensCost);
-                tolReqNum += reqNum; tolTokensCost += tokensCost;
-                readBlocks.push_back({ start, length });
-
-                start = start + length;
-                auto iter = getReqUnitIteratorUnplanedAt(start);//会找到下一个或者和start相等的。
-            }
-            LOG_PLANNER << "read blocks size:" << readBlocks.size();
-            return { tolReqNum , tolTokensCost };
-        }
-
-
-        bool simpleMultiRead(HeadPlanner& headPlanner) {
-            assert(headPlanner.getDiskId() == this->disk->diskId);
-            int readLength = 0;
-            auto iter = getReqUnitIteratorUnplanedAt(headPlanner.getLastActionNode().endPos);
-            if (iter.isEnd()) { return false; };
-
-            int startReadPos = iter.getKey(); int reqUnit = startReadPos;
-            DiskUnit unitInfo = headPlanner.getDisk()->getUnitInfo(reqUnit);
-            //如果reqUnit还未被规划，则规划，且查看是否可以连读。
-            Object* obj = sObjectsPtr[unitInfo.objId];
-            while (obj != &deletedObject &&//该处有对象且未被删除
-                obj->unitReqNum[unitInfo.untId] > 0 && //判断是否有请求
-                (!obj->isPlaned(unitInfo.untId))) {//判断是否未被规划
-                readLength++;
-                reqUnit = (reqUnit + 1) % headPlanner.getDisk()->spaceSize; //查看下一个位置是否未被规划。
-                unitInfo = headPlanner.getDisk()->getUnitInfo(reqUnit);
-                obj = sObjectsPtr[unitInfo.objId];
-            }
-            for (int i = 0; i < readLength; i++) {
-                headPlanner.appendMoveToUnplannedReadAndPlan((startReadPos + i) % headPlanner.getDisk()->spaceSize);
-            }
-            return true;
-        }
-        //reqUnit相关
-        BpTree::Iterator getIteratorAt(int pos) {
-            if (this->reqSpace.getKeyNum() > 0) {
-                return this->reqSpace.iteratorAt(pos);
-            }
-            else {
-                return BpTree::Iterator();
-            }
-        }
-        BpTree::Iterator getReqUnitIteratorUnplanedAt(int pos) {
-            if (this->reqSpace.getKeyNum() > 0) {
-                auto it = this->reqSpace.iteratorAt(pos);
-                int reqUnit = it.getKey();
+                int reqUnit = iterator.getKey();
+                LOG_DISK << "reqUnit:" << reqUnit;
                 auto diskUnit = disk->getUnitInfo(reqUnit);
                 while (sObjectsPtr[diskUnit.objId]->isPlaned(diskUnit.untId)) {
-                    it.toNext();
-                    if (it.isEnd()) {
-                        return BpTree::Iterator();
+                    iterator.toNext();
+                    if (iterator.isEnd()) {
+                        return;
                     }
-                    reqUnit = it.getKey();
+                    reqUnit = iterator.getKey();
                     diskUnit = disk->getUnitInfo(reqUnit);
+                }//直到找到一个还未被规划的unit
+            }
+            int getKey() {
+                return iterator.getKey();
+            }
+            ReqIterator& toNext() {
+                iterator.toNext();
+                return *this;
+            }
+            ReqIterator& toUnplanedNoLessThan(int key) {
+                iterator.toNoLessThan(key);
+                if (iterator.isEnd()) {
+                    return *this;
                 }
-                return it;
+                auto info = this->disk->getUnitInfo(iterator.getKey());
+                auto obj = sObjectsPtr[info.objId];
+                if (obj->isPlaned(info.untId)) {
+                    toNextUnplanedReqUnit();
+                }
+                return *this;
             }
-            else {
-                return BpTree::Iterator();
+            int isEnd() {
+                return iterator.isEnd();
             }
+            ~ReqIterator() {}
+        };
+        //reqUnit相关
+        ReqIterator getIteratorAt(int pos) {
+            return ReqIterator(this->reqSpace.anchorAt(pos), disk);
         }
+        ReqIterator getReqUnitIteratorUnplanedAt(int pos) {
+            auto it = this->reqSpace.anchorAt(pos);
+            if (it.isEnd()) {
+                return ReqIterator(it, disk);
+            }
+
+            int reqUnit = it.getKey();
+            auto diskUnit = disk->getUnitInfo(reqUnit);
+            while (sObjectsPtr[diskUnit.objId]->isPlaned(diskUnit.untId)) {
+                it.toNext();
+                if (it.isEnd()) {
+                    return ReqIterator(it, disk);
+                }
+                reqUnit = it.getKey();
+                diskUnit = disk->getUnitInfo(reqUnit);
+            }
+            return ReqIterator(it, disk);
+        }
+
+        int calNextStart(std::vector<std::pair<int, int>>& readBlocks);
+
+        bool planMultiReadByReqNum();
+        ReadProfitInfo getReqProfitUntilJump(int start, std::vector<std::pair<int, int>>& readBlocks);
+        int getMultiReadBlockAndReqNum(int reqUnit, int* getReqNum, int* getTokensCost);
+
+
+        bool planMultiReadWithExactInfo();
+        ReadProfitInfo getExactReadProfitUntilJump(int start, int startTokens, std::vector<std::pair<int, int>>& readBlocks);
+        int getMultiReadBlockAndRelatedObjects(int reqUnit, int startTokens, int* getTokensCost, std::set<Object*>* relatedObjects, int* getReqNum);
+
+
+
+        bool simpleMultiRead();
         /// @brief 获取下一个key
         /// @param toNext 是否把锚点移动到下一个key处。
         /// @return 如果已经没有下一个请求单元，则返回-1，否则返回请求单元的位置
         
-        int getNextRequestUnit(BpTree::Iterator& iterator, bool toNext = true){
-            if (not toNext) {
-                auto it = iterator.getNext();
-                if (!it.isEnd()) {
-                    return it.getKey();
-                }
-                return -1;
-            }
-            iterator.toNext();
-            if (!iterator.isEnd()) {
-                return iterator.getKey();
-            }
-            return -1;
-            // }catch(const std::logic_error& e){
-            //     throw;
-            // }
-        }
+        
         /// @brief 获取下一个未被规划的请求单元，并且把锚点移动到该请求单元处。
         /// @return 如果已经没有下一个未被规划的请求单元，则返回-1，否则返回请求单元的位置
-        int toNextUnplanedReqUnit(BpTree::Iterator& iterator){
-            iterator.toNext();
-            if (iterator.isEnd()) {
-                return -1;
-            }
-            int reqUnit = iterator.getKey();
-            LOG_DISK << "reqUnit:" << reqUnit;
-            auto diskUnit = disk->getUnitInfo(reqUnit);
-            while(sObjectsPtr[diskUnit.objId]->isPlaned(diskUnit.untId)){
-                iterator.toNext();
-                if (iterator.isEnd()) {
-                    return -1;
-                }
-                reqUnit = iterator.getKey();
-                diskUnit = disk->getUnitInfo(reqUnit);
-            }//直到找到一个还未被规划的unit
-            return reqUnit;
-        }
+        
         bool hasRequestUnit(){
             if(this->reqSpace.getRoot()->keyNum>0) {
                 return true;
@@ -337,19 +140,27 @@ class DiskProcessor{
     };
 
 /// @brief 负责：从请求单元链表中删除已读取的请求单元
-///
 ///请求的信息包括：diskInfo中的reqSpace和actionsPlan、object中的planUnit、
 class DiskManager{
 public:
     std::vector<DiskProcessor*> diskGroup;
     std::vector<int> doneRequestIds;
+    std::map<int, std::vector<Disk*>> tagToDisks;
 public:
     //存储一个活动对象的id索引。方便跟进需要查找的单元信息。
-    DiskManager(){};
-    void addDisk(int spaceSize){
+    DiskManager(int tagNum){
+        for (int i = 0; i < tagNum; i++) {
+            tagToDisks[i] = {};
+        }
+    };
+    void addDisk(int spaceSize, std::vector<std::pair<int,int>>& tagToSpaceSize){
         LOG_DISK << "add disk, space size:" << spaceSize;
         LOG_DISK << "create diskPcs over" << spaceSize;
-        DiskProcessor* diskPcs = new DiskProcessor(new Disk(diskGroup.size(), spaceSize));
+        auto disk = new Disk(diskGroup.size(), spaceSize, tagToSpaceSize);
+        for (int i = 0; i < tagToSpaceSize.size(); i++) {
+            tagToDisks.at(tagToSpaceSize[i].first).push_back(disk);
+        }
+        DiskProcessor* diskPcs = new DiskProcessor(disk);
         LOG_DISK << "create disk over " << spaceSize;
         diskGroup.push_back(diskPcs);
 
@@ -412,23 +223,53 @@ public:
             存储位置：同一对象分配的空间尽量连续（方便连读）。
             存储顺序：三个副本尽量采用不同的存储顺序。
         */
-        LOG_DISK << "using strategy max free space size first.";
-        int* diskSort = (int*)malloc(sizeof(int)*diskGroup.size());
-        for(int i=0;i<diskGroup.size();i++){
-            diskSort[i] = i;
-        }
-        LOG_DISK << "sort disk by free space size";
-        std::sort<int*>(diskSort, diskSort+diskGroup.size(), [=](int a, int b){
-            return (diskGroup[a]->disk->getFreeSpaceSize() > diskGroup[b]->disk->getFreeSpaceSize());
-        });
-        LOG_DISK << "assign space to disk:"<<diskSort[0]<<","<<diskSort[1]<<","<<diskSort[2];
-        for(int i=0;i<REP_NUM;i++){
-            diskGroup[diskSort[i]]->disk->assignSpace(obj, static_cast<UnitOrder>(i), obj.unitOnDisk[i], false, obj.tag);
-            obj.replica[i] = diskSort[i];
-        }//分配空间最大的磁盘。
-
-        free(diskSort);
         
+        LOG_DISK << "using strategy max free space size first.";
+        std::vector<Disk*>& disks = tagToDisks[obj.tag];
+        LOG_DISK << "sort disk by tol reqUnit number";
+        std::sort(disks.begin(), disks.end(), [=](Disk* a, Disk* b) {
+            return (a->calReqUnitNum() < b->calReqUnitNum());
+        });
+        LOG_DISK << "assign space to disk:" << disks;
+        
+        for (int i = 0; i < N; i++) {
+            int diskRes = 0;
+            for (int k = 0; k < diskGroup[i]->disk->endToFreeSpace.size(); k++) {
+                diskRes += diskGroup[i]->disk->endToFreeSpace[k].second->getResidualSize();
+                LOG_DISK << "disk Res size of tagPair" <<"(" << diskGroup[i]->disk->endToFreeSpace[k].second->getTagPair().first
+                    <<", "<< diskGroup[i]->disk->endToFreeSpace[k].second->getTagPair().second<<"):"
+                    << diskGroup[i]->disk->endToFreeSpace[k].second->getResidualSize() << ",original size:" << diskGroup[i]->disk->endToFreeSpace[k].second->getTolSpaceSize();
+            }
+            LOG_DISK <<"disk Res size:"<<diskRes << ",disk req num:" << diskGroup[i]->disk->calReqUnitNum();
+        }
+        int j = 0;
+        int repAssigned = 0;
+        std::vector<int> tagIn = {};
+        int tagChose = obj.tag;//开始时选择原始ta
+		std::vector<int> jList = {};
+        while(repAssigned < REP_NUM) {
+            while (repAssigned < REP_NUM) {
+                while (j<disks.size()&&(std::find(jList.begin(),jList.end(),j)!=jList.end() ||  disks[j]->getFreeSpaceSize(tagChose) < obj.size)) {
+                    j++;
+                }
+                if (j < disks.size()) {
+                    disks[j]->assignSpace(obj, static_cast<UnitOrder>(repAssigned), obj.unitOnDisk[repAssigned], tagChose);
+                    obj.replica[repAssigned] = disks[j]->diskId;
+		            jList.push_back(j);
+                    j++; repAssigned++;
+                }
+                else {
+                    break;
+                }
+            }
+            if (j >= disks.size()) {
+                j = 0;
+                auto tagPair = disks[j]->freeSpace[tagChose].first->getTagPair();
+                tagIn.push_back(tagPair.first); tagIn.push_back(tagPair.second);
+                tagIn.push_back(StatisticsBucket::getMaxRltTag(tagIn.back(), tagIn));
+                tagChose = tagIn.back();
+            }
+        }
     }
 
     /// @brief chose a disk to read unit reqUnit
@@ -483,70 +324,16 @@ public:
         return a->score*(1.0/a->getReqUnitSize()+1.0);
     }
     
+    void simpleMultiReadStrategy();
     //如果能连读就连读，如果无法连读才进行读节点插入。
-    void multiReadStrategy() {
-        //计算每个单元在对应磁盘上所需的时间。并且判断单元是否和之前的单元在同一磁盘上，
-        LOG_DISK << "timestamp " << Watch::getTime() << " plan disk:";
-        std::vector<HeadPlanner*> vHeads;
-        
-        DiskProcessor* diskPcs; Disk* disk;
-        //完成上一步行动，并且把请求指针转到当前head位置。
-        for (int i = 0; i < this->diskGroup.size(); i++) {
-            diskPcs = this->diskGroup[i];
-            disk = diskPcs->disk;
-            if (disk->head.completeAction(&diskPcs->handledOperations, &diskPcs->completedRead)) {
-                LOG_DISK << "disk " << disk->diskId << " completeAction"; 
-                if (Watch::toTimeStep(diskPcs->planner->getLastActionNode().endTokens) <= Watch::getTime() + PLAN_STEP - 1
-                    && diskPcs->reqSpace.getKeyNum()>0) {
-                    vHeads.push_back(diskPcs->planner);
-                }
-                else {
-                    LOG_ACTIONSN(i) << "disk " << i << " has no reqUnit. try to execute";
-                }
-            }
-        }
-
-        LOG_OBJECT << "\nIn planing: present requested objects———— ";
-        for (auto it = requestedObjects.begin(); it != requestedObjects.end(); it++) {
-            LOG_OBJECT << *(*it);
-        }
-        LOG_OBJECT << "\n";
-        //先规划请求单元多的磁盘。
-        auto lambdaCompareHeadPlanner = [this](HeadPlanner*& a, HeadPlanner*& b) {
-            return this->diskGroup[a->getDiskId()]->reqSpace.getKeyNum()
-                > this->diskGroup[b->getDiskId()]->reqSpace.getKeyNum();//谁当前cost最多就先规划谁。
-            };
-        while (vHeads.size()) {//loop
-            //找到所有磁盘的（相对于磁头）第一个未规划plan,以及对应的object
-            std::sort(vHeads.begin(), vHeads.end(), lambdaCompareHeadPlanner);
-            for (int i = 0; i < vHeads.size(); i++) {
-                auto planner = vHeads[i];
-                if (Watch::toTimeStep(planner->getLastActionNode().endTokens) > Watch::getTime() + PLAN_STEP - 1) {
-                    vHeads.erase(vHeads.begin() + i);
-                    i--;
-                    continue;
-                }
-                int diskId = planner->getDiskId();
-                if (!diskGroup[diskId]->planMultiRead(*planner)) {
-                    vHeads.erase(vHeads.begin() + i);
-                    i--;
-                    continue;
-                }
-            }
-        }
-        LOG_DISK << "plan over";
-        for (int i = 0; i < diskGroup.size(); i++) {
-            diskPcs = this->diskGroup[i];
-            diskPcs->planner->excutePresentTimeStep(&diskPcs->handledOperations, &diskPcs->completedRead);
-        }
-        LOG_DISK << "execute over";
-    }
+    void testMultiReadStrategy();
+    void exactMultiReadStrategy();
 
     //如果要跳，那么就选择最大价值的object跳。需要跳的规划最后安排。
     void objectBasedReadStrategy(){
         //计算每个单元在对应磁盘上所需的时间。并且判断单元是否和之前的单元在同一磁盘上，
         LOG_DISK << "timestamp "<< Watch::getTime()<<" plan disk:";
-        std::vector<std::pair<HeadPlanner*, BpTree::Iterator>> vHeads;
+        std::vector<std::pair<HeadPlanner*, DiskProcessor::ReqIterator>> vHeads;
         DiskProcessor* diskPcs; Disk* disk;
         //完成上一步行动，并且把请求指针转到当前head位置。
         for(int i=0;i<this->diskGroup.size();i++){
@@ -582,7 +369,7 @@ public:
         std::vector<int> dists;
         std::vector<Object*> accessibleObjects;
         //先规划工期短的磁盘。如果工期都超过当前3个时间步，则先规划请求数少的磁盘。(或者先规划空行动最多的磁盘)
-        auto lambdaCompareHeadPlanner = [this](std::pair<HeadPlanner*, BpTree::Iterator>& a, std::pair<HeadPlanner*, BpTree::Iterator>& b){
+        auto lambdaCompareHeadPlanner = [this](std::pair<HeadPlanner*, DiskProcessor::ReqIterator>& a, std::pair<HeadPlanner*, DiskProcessor::ReqIterator>& b){
             //if(Watch::toTimeStep(a->getLastActionNode().endTokens) > Watch::getTime() + 2){
             //    if(Watch::toTimeStep(b->getLastActionNode().endTokens) > Watch::getTime() + 2){
             //        return diskGroup[a->getDiskId()]->reqSpace.getKeyNum() > 
@@ -621,7 +408,7 @@ public:
                 }
 
                 int diskId = planner->getDiskId();
-                diskGroup[diskId]->toNextUnplanedReqUnit(vHeads[i].second);
+                vHeads[i].second.toNextUnplanedReqUnit();
             }
             std::sort(vHeads.begin(), vHeads.end(), lambdaCompareHeadPlanner);
             //找到可达plan对应的对象。
@@ -818,7 +605,7 @@ public:
             auto unitInfo = disk->getUnitInfo(readUnit);
             Object* obj = sObjectsPtr[unitInfo.objId];
             //如果这回合刚读完之前的一个行动，但是这回合对应的对象被删除了，那就无效了。
-            if(obj != &deletedObject){
+            if(obj != deletedObject){
                 for (int i = 0; i < REP_NUM;i++) {
                     int diskId = obj->replica[i];
                     LOG_BplusTreeN(diskId) << "on read " << readUnit << " remove unit of " << *obj;
@@ -829,7 +616,12 @@ public:
         }
     }
     
-    
+    void excuteAllPlan() {
+        for (int i = 0; i < diskGroup.size(); i++) {
+            auto diskPcs = this->diskGroup[i];
+            diskPcs->planner->excutePresentTimeStep(&diskPcs->handledOperations, &diskPcs->completedRead);
+        }
+    }
     //返回该回合对应磁盘磁头执行的所有动作
     std::vector<HeadOperator> getHandledOperations(int diskId){
         return std::move(diskGroup[diskId]->handledOperations);
@@ -900,5 +692,7 @@ public:
         return diskGroup[i]->planner;
     }
 };
+
+bool cmpDiskPcsByReqUnitNum(DiskProcessor*& a, DiskProcessor*& b);
 
 #endif

@@ -9,8 +9,10 @@ codec/.vs/
 codec/*.exe
 codec/code_craft
 linuxCode/build/
+linuxCode/backup/
 linuxCode/code_craft
 linuxCode/*.zip
+linuxCode/.vscode/
 
 demos/
 replay/

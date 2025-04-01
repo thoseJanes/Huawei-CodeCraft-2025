@@ -4,7 +4,7 @@
 #include <string>
 
 #if false
-
+#include "../tools/Logger.h"
 
 #else
 using namespace std;
