@@ -21,6 +21,8 @@ private:
     friend LogStream& operator<<(LogStream& s, HeadPlanner& headPlanner);
     //保持对disk的引用。
     Disk* disk;
+    //属于哪个头的规划器
+    DiskHead* head;
     //分支树
     std::map<int, std::pair<std::list<ActionNode>::iterator, HeadPlanner*>> readBranches = {};
     //分支行动。分别为：增加读的位置/创建分支的位置/分支策略。
@@ -33,22 +35,24 @@ public:
     // HeadPlanner(int readConsume, int headpos, int spacesize):
     //     nextReadConsume(readConsume), orgHeadPos(headpos), spaceSize(spacesize){}
 public:
-    HeadPlanner(Disk* planDisk) :
-        spaceSize(planDisk->head.spaceSize),
+    HeadPlanner(Disk* planDisk, DiskHead* diskHead) :
+        spaceSize(diskHead->spaceSize),
         diskId(planDisk->diskId),
-        disk(planDisk)
+        disk(planDisk),
+        head(diskHead)
     {
-        if (planDisk->head.tokensOffset != 0) {
+        if (head->tokensOffset != 0) {
             throw std::logic_error("don't initialize headPlanner by head with action incompleted.");
         }
-        actionNodes.push_back({ {START, getAheadReadTimes(planDisk->head.readConsume)}, planDisk->head.headPos, G - planDisk->head.presentTokens });
-        assert(G - planDisk->head.presentTokens == 0);
+        actionNodes.push_back({ {START, getAheadReadTimes(head->readConsume)}, head->headPos, G - head->presentTokens });
+        assert(G - head->presentTokens == 0);
     }
     //用一个actionNode来创建分支。
-    HeadPlanner(Disk* disk, const ActionNode& actionNode) :
-        spaceSize(disk->head.spaceSize),
+    HeadPlanner(Disk* disk, DiskHead* diskHead, const ActionNode& actionNode) :
+        spaceSize(diskHead->spaceSize),
         diskId(disk->diskId),
-        disk(disk)
+        disk(disk),
+        head(diskHead)
     {
         int aheadRead = 0;
         if (actionNode.action.action == READ || actionNode.action.action == VREAD) {
@@ -60,7 +64,7 @@ public:
         actionNodes.push_back({ {START, aheadRead},
                                 actionNode.endPos,
                                 actionNode.endTokens });
-        if (disk->head.tokensOffset != 0) {
+        if (head->tokensOffset != 0) {
             throw std::logic_error("don't initialize headPlanner by head with action incompleted.");
         }
         //actionNodes.push_back({{START, 0}, disk->head.headPos, G - disk->head.presentTokens});
@@ -273,7 +277,7 @@ public:
         int pstDist;
         auto aftIt = getShortestDistance(unitPos, &pstDist);
         LOG_PLANNERN(diskId) << "shortest distance node " << *aftIt << " in "<< actionNodes;
-        HeadPlanner* branch = new HeadPlanner(disk, *(aftIt));
+        HeadPlanner* branch = new HeadPlanner(disk, head, *(aftIt));
         readBranches.insert({ unitPos, {aftIt, branch} });
         branch->appendMoveTo(unitPos);
         branch->appendAction({ READ, -1 });
@@ -371,7 +375,9 @@ public:
             it++;
         }
         if (it == actionNodes.end()) {
-            throw std::logic_error("error! can't find read!!");
+            //throw std::logic_error("error! can't find read!!");
+            //现在有两个头了，出现这种情况可能因为行动在另一个头里。
+            return;
         }
         //it为需要删除的节点。
         std::list<ActionNode> tempNodes = {};
@@ -419,7 +425,6 @@ public:
     /// @param handledOperation 用来接收执行的行动
     /// @param completedRead 用来接收完成的读操作
     void excutePresentTimeStep(std::vector<HeadOperator>* handledOperation, std::vector<int>* completedRead) {
-        DiskHead& head = this->disk->head;
         auto lastIt = actionNodes.begin();
         auto nextIt = std::next(lastIt);
         LOG_PLANNERN(diskId) << "\nexcute on plan:"<<actionNodes;
@@ -428,10 +433,10 @@ public:
             lastIt++;
             nextIt++;
             assert((*lastIt).action.param >= 0);
-            if (!head.beginAction((*lastIt).action)) {
+            if (!head->beginAction((*lastIt).action)) {
                 throw std::logic_error("can not begin?!");
             }
-            if (!head.completeAction(handledOperation, completedRead)) {
+            if (!head->completeAction(handledOperation, completedRead)) {
                 throw std::logic_error("can not complete?!");
             }
             LOG_PLANNERN(diskId) << "excute operation " << *lastIt;
@@ -442,13 +447,13 @@ public:
         //lastIt是最后一个执行的行动。
         this->actionNodes.front().endPos = (*lastIt).endPos;
         this->actionNodes.front().endTokens = (*lastIt).endTokens;
-        if (nextIt != actionNodes.end() && (*nextIt).action.action == PASS && head.presentTokens > 0) {
-            HeadOperator operation = { PASS, head.presentTokens };
+        if (nextIt != actionNodes.end() && (*nextIt).action.action == PASS && head->presentTokens > 0) {
+            HeadOperator operation = { PASS, head->presentTokens };
             this->actionNodes.front().endTokens += operation.passTimes;
             this->actionNodes.front().endPos += operation.passTimes;
             this->actionNodes.front().endPos %= disk->spaceSize;
-            head.beginAction(operation);
-            head.completeAction(handledOperation, completedRead);
+            head->beginAction(operation);
+            head->completeAction(handledOperation, completedRead);
             this->actionNodes.front().action.aheadRead = 0;
             //lastIt++;
             nextIt->action.passTimes -= operation.passTimes;
@@ -462,9 +467,10 @@ public:
             }
         }
         actionNodes.erase(std::next(actionNodes.begin()), nextIt);
-        LOG_PLANNERN(diskId) << "over excute, plan: " << actionNodes << ",read:"<<*completedRead<<",handled:"<<*handledOperation<<",headpos:"<<this->disk->head.headPos;
+        LOG_PLANNERN(diskId) << "over excute, plan: " << actionNodes << ",read:"<<*completedRead<<",handled:"<<*handledOperation<<",headpos:"<<head->headPos;
     }
     const Disk* getDisk() const { return this->disk; }
+    const DiskHead* getHead() const {return this->head;}
 
     //返回最小距离处的前一个节点。该节点执行完毕后即为最小距离。
     std::list<ActionNode>::iterator getShortestDistance(int target, int* getDist) {
@@ -484,12 +490,12 @@ public:
     }
     
     void test_syncWithHeadTest() const {
-        if (this->actionNodes.front().endPos != this->disk->head.headPos) {
+        if (this->actionNodes.front().endPos != head->headPos) {
             std::logic_error("the planner status not sync with head!!!");
         }
     }
     void test_nodeContinuousTest() const {
-        HeadPlanner* testPlanner = new HeadPlanner(disk, this->actionNodes.front());
+        HeadPlanner* testPlanner = new HeadPlanner(disk, head, this->actionNodes.front());
         LOG_PLANNERN(diskId) << "testContinuous test begin";
         for (auto it = std::next(actionNodes.begin(), 1); it != actionNodes.end(); it++) {
             testPlanner->appendAction((*it).action);

@@ -309,6 +309,7 @@ public:
                 LOG_IPCINFO << "disk " << obj->replica[j] + 1 <<"space...";
             }
         }
+        
         fflush(stdout);
     }
 
@@ -364,14 +365,19 @@ public:
         std::vector<int> diskHeadPos;
         //输出读取过程。
         for(int i=0;i<N;i++){//不同磁盘
-            auto headOperation = diskManager.getHandledOperations(i);
-            LOG_ACTIONSN(i)<< "\n\ntobeComplete:" << diskManager.diskGroup[i]->disk->head.toBeComplete;
-            LOG_ACTIONSN(i)<< "presentTokens:" << diskManager.diskGroup[i]->disk->head.presentTokens;
-            LOG_ACTIONSN(i)<< "nextReadConsume:" << diskManager.diskGroup[i]->disk->head.readConsume;
-            actionsToChars(actionBuffer, headOperation);
-            printf("%s\n", actionBuffer);
-            LOG_IPCINFO << "[player]\n" << actionBuffer ;
-            diskHeadPos.push_back(diskManager.getPlanner(i)->getDisk()->head.headPos);
+            for(int j=0;j<HEAD_NUM;j++){//不同磁头
+                auto headOperation = diskManager.getHandledOperations(i, j);
+            
+                LOG_ACTIONSN(i)<< "\n\ntobeComplete:" << diskManager.diskGroup[i]->disk->heads[j]->toBeComplete;
+                LOG_ACTIONSN(i)<< "presentTokens:" << diskManager.diskGroup[i]->disk->heads[j]->presentTokens;
+                LOG_ACTIONSN(i)<< "nextReadConsume:" << diskManager.diskGroup[i]->disk->heads[j]->readConsume;
+            
+            
+                actionsToChars(actionBuffer, headOperation);
+                printf("%s\n", actionBuffer);
+                LOG_IPCINFO << "[player]\n" << actionBuffer ;
+                diskHeadPos.push_back(diskManager.getPlanner(i, j)->getHead()->headPos);
+            }
         }
 
         LOG_IPCINFO << "Disk head position:" << diskHeadPos;
@@ -385,6 +391,8 @@ public:
             LOG_IPCINFO << doneReqIds[i];
         }
     
+        printf("%d\n", 0);//n_busy
+
         fflush(stdout);
     }
     const DiskManager* getDiskManager(){

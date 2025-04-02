@@ -103,7 +103,6 @@ public:
     int edgeValue = 0;//下一个时间步分数降低多少
     int* coScore;
     int* coEdgeValue;
-    
     std::list<Request*> objRequests = {};//sorted by time//不包含已完成请求。
     std::vector<int> overtimeRequests = {};
 
@@ -117,10 +116,11 @@ public:
         this->planReqUnit = this->unitReqNum + size*(REP_NUM+1);
         this->planReqTime = this->unitReqNum + size*(REP_NUM+2);
         this->unitReqNumOrder = this->unitReqNum + size*(REP_NUM+3);//在commitunit时维护。
-        this->planBuffer = this->unitReqNum + size*(REP_NUM+6);
-
+        
         this->coScore = this->unitReqNum + size*(REP_NUM+4);
         this->coEdgeValue = this->unitReqNum + size*(REP_NUM+5);
+
+        this->planBuffer = this->unitReqNum + size*(REP_NUM+6);
 
         //初始化
         for(int i=0;i<size;i++){
@@ -202,7 +202,6 @@ public:
         }else{
             this->planBuffer[unitId] = timeRequired;
         }
-        
     }
     int getScoreLoss(){//会自动清除virPlanReqTime
         int delay;
@@ -269,6 +268,16 @@ public:
         }
     }
     
+    //会直接把分数累加到输入量上。
+    void calUnitScoreAndEdge(int unitId, int* getScore, int* getEdge){//会用四倍！
+        for(int i=this->size-1;i>=0;i--){
+            *getScore += this->coScore[i]/(i+1);
+            *getEdge += this->coEdgeValue[i]/(i+1);
+            if(this->unitReqNumOrder[i] == unitId){
+                return;
+            }
+        }
+    }
     //确认单元之后，需要在reqSpace中删除其它副本。
     /// @brief commit a unit which has been read.
     /// @param unitId unit order in object

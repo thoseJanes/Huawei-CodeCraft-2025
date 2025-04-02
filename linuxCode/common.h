@@ -46,4 +46,6 @@ inline int getDistance(int target, int from, int spaceSize) {
 }
 
 
+
+
 #endif

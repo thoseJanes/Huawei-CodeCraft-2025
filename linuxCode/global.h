@@ -20,21 +20,24 @@
 #define LOG_INIT LOG_FILE("main")
 #define LOG_REQUEST LOG_FILE("request")
 #define LOG_OBJECT LOG_FILE("object")
+#define LOG_BplusTreeTest LOG_FILE("bPlusTreeTest")
 
 #define MAX_DISK_NUM (10 + 1)//磁盘id从0开始
 #define MAX_DISK_SIZE (16384 + 1)
 #define MAX_REQUEST_NUM (30000000 + 1)//id从1开始//4字节（32位）：范围是 [−2147483648,2147483647]
 #define MAX_OBJECT_NUM (100000 + 1)//id从1开始
 #define REP_NUM (3)
+#define HEAD_NUM (2)
 #define FRE_PER_SLICING (1800)
 
 
 #define PHASE_ONE_TIME (10)
 #define EXTRA_TIME (105)
-#define START_SCORE (2000)
 #define SCORE_FACTOR(size) (size+1)
-#define PHASE_ONE_EDGE (10)
-#define PHASE_TWO_EDGE (20)
+//这里的分数共乘了四倍，为了方便除法运算。
+#define START_SCORE (4000)
+#define PHASE_ONE_EDGE (20)
+#define PHASE_TWO_EDGE (40)
 
 #define PLAN_STEP (1)
 #define MULTIREAD_SEARCH_NUM (20)
@@ -72,7 +75,8 @@ extern int T;//时间步
 extern int M;//tag数，输入tag从1到M，内部从0到M-1
 extern int N;//磁盘数，输入磁盘从1开始到N，内部磁盘从0到N-1
 extern int V;//单元数，输入单元从1开始到V，内部单元用0到V-1表示
-extern int G;//令牌数，
+extern int G;//令牌数
+extern int K;//垃圾收集阶段的交换单元数（对于每个硬盘）
 
 template<typename T>
 LogStream& operator<<(LogStream& s, const std::vector<T>& vec){

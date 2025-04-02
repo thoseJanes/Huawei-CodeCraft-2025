@@ -324,12 +324,14 @@ private:
 public:
     const int diskId;
     const int spaceSize;
-    DiskHead head;
+    std::array<DiskHead*, HEAD_NUM> heads;
     //存放被请求的单元信息。
     Disk(int id, int spacesize, std::vector<std::pair<int, int>> tagToSpaceSize)
-        :diskId(id), head(spacesize), spaceSize(spacesize){
-        this->head.headPos = 0;
-        this->head.id = id;
+        :diskId(id), spaceSize(spacesize){
+        for(int i=0;i<HEAD_NUM;i++){
+            this->heads[i] = new DiskHead(spaceSize);
+            this->heads[i]->id = id;
+        }
         LOG_DISK << "start init space";
         diskSpace.initSpace(spacesize);
         for(int i=0;i<spacesize;i++){

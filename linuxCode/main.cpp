@@ -3,11 +3,11 @@
 #include <cstdlib>
 #include "global.h"
 #include "worker.h"
-#define LOG_BplusTreeTest LOG_FILE("bPlusTreeTest")
 
 
 
-int T, M, N, V, G;
+
+int T, M, N, V, G, K;
 void start(){
     printf("OK\n");
     LOG_IPCINFO << "\n[player]\n" << "OK\n";
@@ -49,11 +49,13 @@ void test_validObjectReq_testPlanner(Worker& worker){
         auto obj = requestedObjects[i];
         obj->test_validRequestsTest();
     }
+    auto manager = worker.getDiskManager();
     for (int i = 0; i < N; i++) {
-        auto manager = worker.getDiskManager();
-        auto planner = manager->getPlanner(i);
-        planner->test_syncWithHeadTest();
-        planner->test_nodeContinuousTest();
+        for(int j=0;j<HEAD_NUM;j++){
+            auto planner = manager->getPlanner(i,j);
+            planner->test_syncWithHeadTest();
+            planner->test_nodeContinuousTest();
+        }
     }
 }
 
@@ -78,26 +80,26 @@ void test_bPlusTreeIteratorTest(Worker& worker) {
 
 int main()
 {
-    LogFileManager::setLogFilePath(".\\log");
-    //FILE* originalStdin = freopen("/home/eleanor-taylor/work/2025huawei/data/sample_practice.in", "r", stdin);
+    LogFileManager::setLogFilePath("/home/eleanor-taylor/work/2025huawei-semifinals/linuxCode/log");
+    //FILE* originalStdin = freopen("/home/eleanor-taylor/work/2025huawei-semifinals/data/sample_practice.in", "r", stdin);
     
     LOG_INIT << "get global params"; 
-    scanf("%d%d%d%d%d", &T, &M, &N, &V, &G);
+    scanf("%d%d%d%d%d%d", &T, &M, &N, &V, &G, &K);
     LOG_INIT <<"T:"<<T<<", M:"<<M<<", N:"<<N<<", V:"<<V<<", G:"<<G<<"\n";
 
     const std::vector<std::pair<std::string, int>> logFiles = {
-    {"main", -1},
-    {"disk",N},
-    {"BplusTree",N},
-    {"circularLinkedList",N},
-    {"worker",-1},
-    {"bucketData",-1},
-    {"request",-1},
-    {"object",-1},
-    {"actions",N},
-    {"planner",N},
+    // {"main", -1},
+    // {"disk",N},
+    // {"BplusTree",N},
+    // {"circularLinkedList",N},
+    // {"worker",-1},
+    // {"bucketData",-1},
+    // {"request",-1},
+    // {"object",-1},
+    // {"actions",N},
+    // {"planner",N},
     {"ipcInfo",-1},
-    {"bPlusTreeTest", -1}
+    //{"bPlusTreeTest", -1}
     };
     //addLogFiles(logFiles);
 
@@ -114,9 +116,9 @@ int main()
     LOG_INIT << "start loop";
 
     for (int t = 1; t <= T + EXTRA_TIME; t++) {
-        //if (t == 15000) {
-        //   addLogFiles(logFiles);
-        //}
+        if (t == 1) {
+          addLogFiles(logFiles);
+        }
         Watch::clock();
         worker.correctWatch();
         logTimeStamp(logFiles);
@@ -131,6 +133,15 @@ int main()
         worker.processDelete();
         worker.processWrite();
         worker.processRead();
+        if (Watch::getTime() % FRE_PER_SLICING == 0) {
+            //gc_action();
+            scanf("%*s %*s");
+            printf("GARBAGE COLLECTION\n");
+            for (int i = 1; i <= N; i++) {
+                printf("0\n");
+            }
+            fflush(stdout);
+        }
     }
     //clean();
 
