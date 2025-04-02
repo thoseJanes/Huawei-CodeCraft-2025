@@ -41,7 +41,9 @@ class DataSet():
             self.DISKNUM = int(user_input[2])
             self.UNITNUM = int(user_input[3])
             self.TOKENNUM = int(user_input[4])
-            
+            self.CollectionNum = int(user_input[5])
+            print("tolTime:",self.TOLTIME)
+
             operateList = [self.tagToDelNumList, self.tagToWrtNumList, self.tagToReqNumList]
             for loop in range(3):
                 for tag in range(1, self.TAGNUM+1):
@@ -56,16 +58,15 @@ class DataSet():
         with open(self.dataFile, 'r', encoding='utf-8') as file:
             lines = file.readlines()
             lineNum = 0
-            while(not lines[lineNum].startswith("TIMESTAMP")):
+            while(lines[lineNum].find("TIMESTAMP")==-1):
                 lineNum+=1
             time = 0
             while(lineNum<len(lines)):
-                if(lines[lineNum].startswith("TIMESTAMP")):
+                if(lines[lineNum].find("TIMESTAMP")!=-1):
                     sline = lines[lineNum].split()
                     assert(len(sline)==2)
                     time = int(sline[1])
                     lineNum += 1
-                    continue
                 
                 delNum = int(lines[lineNum])
                 lineNum += 1
@@ -109,8 +110,11 @@ class DataSet():
                     assert(objList)
                     objList[-1].addRequest(sline[0], time)
                     lineNum += 1
-                if(lineNum<self.TOLTIME):
-                    assert(lines[lineNum].startswith("TIMESTAMP"))
+                if(time<self.TOLTIME):
+                    if(lines[lineNum].find("GARBAGE")!=-1):
+                        lineNum += 1
+                    assert(lines[lineNum].find("TIMESTAMP")!=-1)
+                    assert(lines[lineNum].find("GARBAGE")==-1)
     def timeBucketNumByTag(self, interval, tag, type, offset = 1):
         """
         获取以interval为桶宽的时间桶内的属于特定tag的操作对象数目。

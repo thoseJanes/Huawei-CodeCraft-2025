@@ -1,3 +1,3 @@
-python run.py ./interactor/linux/interactor ./data/sample_practice.in ./linuxCode/code_craft
+python run.py ./interactor/linux/interactor ./data/sample_practice.in ./linuxCode/code_craft -d
 
 	
