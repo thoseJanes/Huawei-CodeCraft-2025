@@ -180,6 +180,38 @@ public:
         }
     }
     
+
+    // void simpleMultiReadStrategy();
+    //如果能连读就连读，如果无法连读才进行读节点插入?
+    void testMultiReadStrategy();
+    // void exactMultiReadStrategy();
+    void excuteAllPlan() {
+        for (int i = 0; i < diskGroup.size(); i++) {
+            auto diskPcs = this->diskGroup[i];
+            for(int j=0;j<HEAD_NUM;j++){
+                diskPcs->planners[j]->excutePresentTimeStep(&diskPcs->handledActions[j], &diskPcs->completedRead);
+            }
+        }
+    }
+    //返回该回合对应磁盘磁头执行的所有动作
+    std::vector<HeadOperator> getHandledOperations(int diskId, int headId){
+        return std::move(diskGroup[diskId]->handledActions[headId]);
+    }
+    //返回该回合完成的所有请求
+    std::vector<int> getDoneRequests(){
+        for(int i=0;i<diskGroup.size();i++){
+            LOG_ACTIONSN(i) << "complete read" << diskGroup[i]->completedRead;
+            if (diskGroup[i]->completedRead.size()) {
+                LOG_BplusTree << "disk " << i << " " << diskGroup[i]->disk->diskId <<
+                    " complete read " << diskGroup[i]->completedRead;
+                
+                freshDoneRequestIds(diskGroup[i]->disk, std::move(diskGroup[i]->completedRead));
+            }
+        }
+        return std::move(doneRequestIds);
+    }
+
+
     void freshNewReqUnits(const Object& obj, std::vector<int> unitIds){
         bool test = false;
         for(int r=0;r<REP_NUM;r++){//第几个副本
@@ -206,11 +238,25 @@ public:
 
         
     }
+    /// @brief 处理超时请求
+    /// @param obj 超时请求所属对象
+    /// @param unitIds 因为删除该超时请求而被取消的请求单元
     void freshOvertimeReqUnits(const Object& obj, std::vector<int> unitIds){
+        for(int i=0;i<unitIds.size();i++){
+            int unitId = unitIds[i];
+            if(obj.isPlaned(unitId)){
+                int diskId = obj.planReqUnit[unitId];
+                int headId = obj.planReqHead[unitId];
+                auto rep = std::find(obj.replica, obj.replica+REP_NUM, diskId);
+                int repId = static_cast<int>(rep - obj.replica);
+                this->diskGroup[diskId]->planners[headId]->cancelRead(obj.unitOnDisk[repId][unitId]);
+            }
+        }
         for(int r=0;r<REP_NUM;r++){//第几个副本
             DiskProcessor* diskPcs = this->diskGroup[obj.replica[r]];
             for(int i=0;i<unitIds.size();i++){
-                LOG_DISK << "remove overtime req unit "<< obj.unitOnDisk[r][unitIds[i]]<<" of disk "<<obj.replica[r];
+                int unitId = unitIds[i];
+                LOG_DISK << "remove overtime req unit "<< obj.unitOnDisk[r][unitId]<<" of disk "<<obj.replica[r];
                 diskPcs->reqSpace.remove(obj.unitOnDisk[r][unitIds[i]]);
             }
         }
@@ -260,7 +306,7 @@ public:
                     j++;
                 }
                 if (j < disks.size()) {
-                    disks[j]->assignSpace(obj, static_cast<UnitOrder>(repAssigned), obj.unitOnDisk[repAssigned], tagChose);
+                    disks[j]->assignSpace(obj, repAssigned, tagChose);
                     obj.replica[repAssigned] = disks[j]->diskId;
 		            jList.push_back(j);
                     j++; repAssigned++;
@@ -278,56 +324,6 @@ public:
             }
         }
     }
-
-    // void simpleMultiReadStrategy();
-    //如果能连读就连读，如果无法连读才进行读节点插入?
-    void testMultiReadStrategy();
-    // void exactMultiReadStrategy();
-    
-    void freshDoneRequestIds(Disk* disk, std::vector<int> completedRead){
-        for(int i=0;i<completedRead.size();i++){
-            int readUnit = completedRead[i];
-            auto unitInfo = disk->getUnitInfo(readUnit);
-            Object* obj = sObjectsPtr[unitInfo.objId];
-            //如果这回合刚读完之前的一个行动，但是这回合对应的对象被删除了，那就无效了。
-            if(obj != deletedObject){
-                for (int i = 0; i < REP_NUM;i++) {
-                    int diskId = obj->replica[i];
-                    LOG_BplusTreeN(diskId) << "on read " << readUnit << " remove unit of " << *obj;
-                }
-                obj->commitUnit(unitInfo.untId, &doneRequestIds);
-                this->removeObjectReqUnit(*obj, unitInfo.untId);
-            }
-        }
-    }
-    
-    void excuteAllPlan() {
-        for (int i = 0; i < diskGroup.size(); i++) {
-            auto diskPcs = this->diskGroup[i];
-            for(int j=0;j<HEAD_NUM;j++){
-                diskPcs->planners[j]->excutePresentTimeStep(&diskPcs->handledActions[j], &diskPcs->completedRead);
-            }
-            
-        }
-    }
-    //返回该回合对应磁盘磁头执行的所有动作
-    std::vector<HeadOperator> getHandledOperations(int diskId, int headId){
-        return std::move(diskGroup[diskId]->handledActions[headId]);
-    }
-    //返回该回合完成的所有请求
-    std::vector<int> getDoneRequests(){
-        for(int i=0;i<diskGroup.size();i++){
-            LOG_ACTIONSN(i) << "complete read" << diskGroup[i]->completedRead;
-            if (diskGroup[i]->completedRead.size()) {
-                LOG_BplusTree << "disk " << i << " " << diskGroup[i]->disk->diskId <<
-                    " complete read " << diskGroup[i]->completedRead;
-                
-                freshDoneRequestIds(diskGroup[i]->disk, std::move(diskGroup[i]->completedRead));
-            }
-        }
-        return std::move(doneRequestIds);
-    }
-
     void freeSpace(Object& obj){
         LOG_DISK << "free space of obj "<<obj.objId;
         //如果存在请求则删除该请求。
@@ -339,15 +335,14 @@ public:
                 //diskGroup[diskId]->ignoreRead.push_back(obj.unitOnDisk[i][j]);
                 //取消当前磁头的操作
                 int planDiskId = obj.planReqUnit[j];//找到规划该单元的磁头
+                int planHeadId = obj.planReqHead[j];
                 LOG_DISKN(planDiskId) << "when delete obj " << obj << " ,obj has been planed";
                 Disk* disk = diskGroup[planDiskId]->disk;
                 int* repId = std::find(obj.replica, obj.replica + REP_NUM, planDiskId);
                 assert(static_cast<int>(repId - obj.replica) < REP_NUM);
                 int readPos = obj.unitOnDisk[static_cast<int>(repId - obj.replica)][j];
 
-                for(int k=0;k<HEAD_NUM;k++){
-                    diskGroup[planDiskId]->planners[k]->cancelRead(readPos);
-                }
+                diskGroup[planDiskId]->planners[planHeadId]->cancelRead(readPos);
                 
                 LOG_DISKN(planDiskId) << "get canceled read:" << readPos;
                 auto unitInfo = disk->getUnitInfo(readPos);
@@ -370,10 +365,26 @@ public:
             LOG_DISK << "release space in disk "<<diskId;
             LOG_LINKEDSPACEN(diskId) << "free space for obj:" << obj;
             
-            disk->releaseSpace(obj.unitOnDisk[i], obj.size, obj.tag);
+            disk->releaseSpace(obj, i);
         }
     }
     
+    void freshDoneRequestIds(Disk* disk, std::vector<int> completedRead){
+        for(int i=0;i<completedRead.size();i++){
+            int readUnit = completedRead[i];
+            auto unitInfo = disk->getUnitInfo(readUnit);
+            Object* obj = sObjectsPtr[unitInfo.objId];
+            //如果这回合刚读完之前的一个行动，但是这回合对应的对象被删除了，那就无效了。
+            if(obj != deletedObject){
+                for (int i = 0; i < REP_NUM;i++) {
+                    int diskId = obj->replica[i];
+                    LOG_BplusTreeN(diskId) << "on read " << readUnit << " remove unit of " << *obj;
+                }
+                obj->commitUnit(unitInfo.untId, &doneRequestIds);
+                this->removeObjectReqUnit(*obj, unitInfo.untId);
+            }
+        }
+    }
     void freshTokens(){
         for(int i=0;i<diskGroup.size();i++){
             for(int j=0;j<HEAD_NUM;j++){

@@ -116,19 +116,18 @@ int main()
     LOG_INIT << "start loop";
 
     for (int t = 1; t <= T + EXTRA_TIME; t++) {
-        if (t == 1) {
-          addLogFiles(logFiles);
-        }
+        // if (t == 1) {
+        //   addLogFiles(logFiles);
+        // }
         Watch::clock();
         worker.correctWatch();
-        logTimeStamp(logFiles);
+        //logTimeStamp(logFiles);
         worker.freshDiskTokens();
         worker.freshObjectScore();//必须在clearOvertimeReq之前。
-        worker.clearOvertimeReqAndFreshPhaseTwoReq();//考虑了请求超时可能有单元被取消。
+        worker.freshPhaseTwoReq();//考虑了请求超时可能有单元被取消。
 
-        //test_validObjectReq_testPlanner(worker);
-        //test_bPlusTreeIteratorTest(worker);
-
+        // test_validObjectReq_testPlanner(worker);
+        // test_bPlusTreeIteratorTest(worker);
 
         worker.processDelete();
         worker.processWrite();

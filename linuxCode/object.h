@@ -85,9 +85,11 @@ public:
     const int size;//大小
     const int tag;
     const int objId;
+    
 
     //存储时由磁盘设置。
     int replica[REP_NUM];//副本所在磁盘
+    bool scatterStore[REP_NUM];
     int* unitOnDisk[REP_NUM];//相应位置的单元存储在磁盘上的位置
 
     //规划时设置（优化方向：采用专门的对象通过注入方式临时分配规划内存。
@@ -95,6 +97,7 @@ public:
     int* unitReqNum;//相应位置单元上的剩余请求数
     int* unitReqNumOrder;//哪个单元的req最大，哪个单元就在前面。
     int* planReqUnit;//相应位置的单元是否已经被规划,如果被规划，记录分配的磁盘，否则置-1（防止其它磁盘再读）
+    int* planReqHead;//记录规划分配的磁头
     int* planReqTime;//相应位置的单元被规划完成的时间,记录该单元完成读请求的时间，否则置-1（防止其它磁盘再读）
     //每次规划使用
     int* planBuffer;//大小为size//给branch用于临时比较代价的buffer。使用完需要置负一。也可以给连读策略用。判断是否已经被规划。
@@ -104,16 +107,16 @@ public:
     int* coScore;
     int* coEdgeValue;
     std::list<Request*> objRequests = {};//sorted by time//不包含已完成请求。
-    std::vector<int> overtimeRequests = {};
 
     Object(int id, int size, int tag):objId(id),tag(tag),size(size){
         //this->unitReqNum = (int*)malloc((REP_NUM+3)*size*sizeof(int));//malloc分配0空间是合法操作。
         //分配内存
-        this->unitReqNum = (int*)malloc(size*(REP_NUM+7)*sizeof(int));
+        this->unitReqNum = (int*)malloc(size*(REP_NUM+8)*sizeof(int));
         for(int i=0;i<REP_NUM;i++){
             this->unitOnDisk[i] = this->unitReqNum + size*(i+1);
         }
         this->planReqUnit = this->unitReqNum + size*(REP_NUM+1);
+        this->planReqHead = this->unitReqNum + size*(REP_NUM+7);
         this->planReqTime = this->unitReqNum + size*(REP_NUM+2);
         this->unitReqNumOrder = this->unitReqNum + size*(REP_NUM+3);//在commitunit时维护。
         
@@ -126,11 +129,16 @@ public:
         for(int i=0;i<size;i++){
             this->unitReqNum[i] = 0;
             this->planReqUnit[i] = -1;
+            this->planReqHead[i] = -1;
             this->planReqTime[i] = -1;
             this->planBuffer[i] = -1;
             this->unitReqNumOrder[i] = i;
             this->coScore[i] = 0;
             this->coEdgeValue[i] = 0;
+        }
+
+        for(int i=0;i<REP_NUM;i++){
+            this->scatterStore[i] = false;
         }
     }
 
@@ -140,7 +148,7 @@ public:
     //     }
     //     return false;
     // }
-    bool allPlaned(){
+    bool allPlaned() const {
         bool flag = true;
         for(int i=0;i<size;i++){
             //如果存在对i的请求且该请求还未规划
@@ -150,7 +158,7 @@ public:
         }
         return flag;
     }
-    bool isPlaned(int unitId){
+    bool isPlaned(int unitId) const {
         if(this->planReqUnit[unitId]>=0
             && planReqTime[unitId]>=Watch::getTime()){
             return true;
@@ -167,28 +175,32 @@ public:
             return -1;
         }
     }
-    void plan(int unitId, int diskId){
+    void plan(int unitId, int diskId, int headId){
         this->planReqUnit[unitId] = diskId;
+        this->planReqHead[unitId] = headId;
         this->planReqTime[unitId] = Watch::getTime();
     }
-    void plan(int unitId, int diskId, int timeRequired, bool isOffset){
+    void plan(int unitId, int diskId, int headId, int timeRequired, bool isOffset){
         if(isOffset){
             this->planReqTime[unitId] = timeRequired + Watch::getTime();
         }else{
             this->planReqTime[unitId] = timeRequired;
         }
         this->planReqUnit[unitId] = diskId;
+        this->planReqHead[unitId] = headId;
     }
-    void test_plan(int unitId, int diskId, int timeRequired, bool isOffset){
+    void test_plan(int unitId, int diskId, int headId, int timeRequired, bool isOffset){
         if(isOffset){
             assert(this->planReqTime[unitId] == timeRequired + Watch::getTime());
         }else{
             assert(this->planReqTime[unitId] == timeRequired);
         }
         assert(this->planReqUnit[unitId] = diskId);
+        assert(this->planReqHead[unitId] = headId);
     }
     void clearPlaned(int unitId){
         this->planReqUnit[unitId] = -1;
+        this->planReqHead[unitId] = -1;
         this->planReqTime[unitId] = 0;
     }
     
@@ -349,8 +361,12 @@ public:
 
         return newReqUnit;
     }
-    //返回取消的请求单元(reqUnit)在obj中的位置(unitId)
-    std::vector<int> dropOvertimeRequest(int reqId){//超时删除的请求。
+
+    /// @brief 提前一定时间步预判并删除超时请求，更新分数
+    /// @param reqId 删除的请求Id
+    /// @param preStep 提前的时间步数量
+    /// @return 返回取消的请求单元(reqUnit)在obj中的位置(unitId)
+    std::vector<int> dropOvertimeRequest(int reqId, vector<int>& overtimeReqs){//超时删除的请求。
         //更新obj内部的单元请求数，更新disk内的请求单元链表。
         std::vector<int> overtimeReqUnits = {};
         auto req = requestsPtr[reqId];
@@ -362,14 +378,18 @@ public:
                 }
             }
         }
-        //删除请求
+        //删除请求.该请求一定处于最后方。因为之前的请求都完成了。
         if((*this->objRequests.begin())->reqId == reqId){
-            overtimeRequests.push_back(reqId);
+            //overtimeRequests.push_back(reqId);
+            overtimeReqs.push_back(reqId);
             this->objRequests.erase(this->objRequests.begin());
         }else{
             throw std::logic_error("dropped request shold be the first request!");
         }
-        freshOvertimeEdge(1-req->is_done);
+        //更新分数
+        int getScore = 0; int getEdge = 0;
+        req->calScore(this->size, &getScore, &getEdge);
+        freshOvertimeReq(1-req->is_done, getScore, getEdge);
         //这可不是协作值！这是因为请求过期而请求总数为0的单元数。assert(overtimeReqUnits.size() == 1-req->is_done);//未完成的单元数，即协作值。
         deleteRequest(reqId);
         
@@ -438,6 +458,12 @@ public:
     void freshOvertimeEdge(int coValue){
         this->edgeValue -= PHASE_TWO_EDGE*SCORE_FACTOR(size);
         this->coEdgeValue[coValue-1] -= PHASE_TWO_EDGE*SCORE_FACTOR(size);
+    }
+    void freshOvertimeReq(int coValue, int score, int edge){
+        this->edgeValue -= edge;
+        this->score -= score;
+        this->coEdgeValue[coValue-1] -= edge;
+        this->coScore[coValue-1] -= score;
     }
     
     

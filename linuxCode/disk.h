@@ -54,14 +54,15 @@ class DiskHead{
 private:
     
 public:
-    int id;
+    int diskId;//为了log而加的
+    const int headId;
     const int spaceSize;
     int headPos = 0;
     int readConsume = FIRST_READ_CONSUME;
     int presentTokens = G;
     int tokensOffset = 0;//在上个回合花的下个回合的令牌。
     HeadOperator toBeComplete = {NONE, 0};
-    DiskHead(int spacesize):spaceSize(spacesize){LOG_DISK<< "init head";}
+    DiskHead(int id, int spacesize):headId(id),spaceSize(spacesize){LOG_DISK<< "init head";}
     void freshTokens(){
         this->presentTokens = G - this->tokensOffset;
         this->tokensOffset = 0;
@@ -90,7 +91,7 @@ public:
         if(tokensOffset > 0){
             return false;
         }
-        LOG_ACTIONSN(id) << "begin action" << headOperator;
+        LOG_ACTIONSN(diskId) << "begin action" << headOperator;
         if((headOperator.action == READ||headOperator.action == VREAD) && presentTokens > 0){
             toBeComplete = headOperator;
             return true;
@@ -111,7 +112,7 @@ public:
     /// @param completedRead 把完成的读都push_back到该参数中。（便于判断哪些单元已经被读完了）
     /// @return true if complete. false when has no enough tokens to complete.
     bool completeAction(std::vector<HeadOperator>* handledOperation, std::vector<int>* completedRead){
-        LOG_ACTIONSN(id) << "try complete action" << toBeComplete;
+        LOG_ACTIONSN(diskId) << "try complete action" << toBeComplete;
         auto action = toBeComplete.action;
         if(toBeComplete.action == NONE){
             return true;
@@ -215,11 +216,13 @@ struct DiskUnit{
     int untId = 0;
 };
 
-
 class Disk:noncopyable{
 public:
     std::map<int, std::pair<SpacePieceBlock*, StorageMode>> freeSpace;
     std::vector<std::pair<int, SpacePieceBlock*>> endToFreeSpace;
+    #ifdef ENABLE_SCATTEROBJS
+    std::vector<Object*> scatterObjs;
+    #endif
 private:
     //不仅存储对象id(int)，还存储unit值（char*),字节对齐会增加额外空间。
     //也可以用两个space，一个存char，一个存int。
@@ -329,8 +332,8 @@ public:
     Disk(int id, int spacesize, std::vector<std::pair<int, int>> tagToSpaceSize)
         :diskId(id), spaceSize(spacesize){
         for(int i=0;i<HEAD_NUM;i++){
-            this->heads[i] = new DiskHead(spaceSize);
-            this->heads[i]->id = id;
+            this->heads[i] = new DiskHead(i, spaceSize);
+            this->heads[i]->diskId = id;
         }
         LOG_DISK << "start init space";
         diskSpace.initSpace(spacesize);
@@ -378,17 +381,11 @@ public:
 
     //freeSpace相关
     //urgent表明该对象写入时即需要读取。tag表明是否按tag尽量分在同一tag周围（或相关性较大tag周围）。
-    void assignSpace(Object& obj ,UnitOrder order ,int* unitOnDisk, int tag = -1){
+    void assignSpace(Object& obj ,int repId ,int tag){
         LOG_LINKEDSPACEN(this->diskId) << "\nstart assign space for obj " << obj << " of tag " << tag;
-        if (tag != -1) {
-            LOG_LINKEDSPACEN(this->diskId) << "space" << *freeSpace[tag].first;
-        }
-        else {
-
-        }
-        
         int objSize = obj.size;
-        std::vector<int> units = formUnitsByOrder(objSize, order);
+        int* unitOnDisk = obj.unitOnDisk[repId];
+        std::vector<int> units = formUnitsByOrder(objSize, static_cast<UnitOrder>(repId));
         //尝试寻找一块合适大小空间。
         auto mode = freeSpace[tag].second;
         auto space = freeSpace[tag].first;
@@ -411,6 +408,10 @@ public:
             }
             else {//找不到一整块足够大小的空间。直接分散存储（效率会较低）。
                 //FIXME:应该记录最大空间大小！或者分级存储freeSpace。
+                #ifdef ENABLE_SCATTEROBJS
+                obj.scatterStore[repId] = true;
+                scatterObjs.push_back(&obj);
+                #endif
                 int leftSize = objSize;
                 int tempAlloc = 0;
                 LOG_LINKEDSPACEN(diskId) << "can't find continuous space. tolSize:" << objSize;
@@ -442,6 +443,10 @@ public:
                 allocate(space, mode, obj.objId, unitOnDisk, units.begin(), start, objSize);
             }
             else {//FIXME:应该记录最大空间大小?或者分级存储freeSpace。
+                #ifdef ENABLE_SCATTEROBJS
+                obj.scatterStore[repId] = true;
+                scatterObjs.push_back(&obj);
+                #endif
                 int leftSize = objSize;
                 int tempAlloc = 0;
                 LOG_LINKEDSPACEN(diskId) << "can't find continuous space. tolSize:" << objSize;
@@ -465,12 +470,22 @@ public:
         //在空的地方读会报错吗？
         this->tagUnitNum[tag] += objSize;
     }
-    void releaseSpace(int* unitOnDisk, int objSize, int tag){
-        this->dealloc(unitOnDisk, objSize, tag, freeSpace[tag].second);
-        this->tagUnitNum[tag] -= objSize;
+    void releaseSpace(Object& obj ,int repId){
+        #ifdef ENABLE_SCATTEROBJS
+        if(obj.scatterStore[repId]){
+            auto it = std::find(scatterObjs.begin(), scatterObjs.end(), &obj);
+            if(it == scatterObjs.end()){
+                throw std::logic_error("can't find scatter stored obj");
+            }
+            scatterObjs.erase(it);
+        }
+        #endif
+        this->dealloc(obj.unitOnDisk[repId], obj.size, obj.tag, freeSpace[obj.tag].second);
+        this->tagUnitNum[obj.tag] -= obj.size;
     }
 
     int getFreeSpaceSize(int tag){return freeSpace[tag].first->getResidualSize();}
+    //优化方向：严格来说，应该以之后还会来多少req以及req的分散/集中性为指标
     int calReqUnitNum() {
         int reqUnitNum = 0;
         for (int i = 0; i < M; i++) {
@@ -522,6 +537,7 @@ public:
         每次取十个磁头最靠近的十个请求，规划是否选择这十个请求中的副本。
     */
 };
+
 
 
 #endif

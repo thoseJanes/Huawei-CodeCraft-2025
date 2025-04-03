@@ -80,7 +80,8 @@ bool DiskProcessor::planMultiReadByReqNum(int headId) {//每次选择一个请�
                 auto info = disk->getUnitInfo((start + j) % disk->spaceSize);
                 auto obj = sObjectsPtr[info.objId];
                 if (info.objId > 0) {
-                    obj->plan(info.untId, disk->diskId);//为当前时间步规划。防止其它磁盘也用到该磁盘现在规划的单元。
+
+                    //obj->plan(info.untId, disk->diskId, headId);//为当前时间步规划。防止其它磁盘也用到该磁盘现在规划的单元。
                     LOG_OBJECT << "obj " << obj->objId << " plan for unit "
                         << info.untId << " in pos " << (start + j) % disk->spaceSize << " on disk " << this->disk->diskId;
                     LOG_PLANNER << "obj " << obj->objId << " plan for unit "
@@ -247,7 +248,7 @@ void DiskManager::testMultiReadStrategy() {
         }
     }
     LOG_DISK << "plan over";
-    excuteAllPlan();
+
     LOG_DISK << "execute over";
 }
 

@@ -162,7 +162,7 @@ public:
         if (!obj->isPlaned(unitInfo.untId) && obj->isRequested(unitInfo.untId) ) {
             appendMoveTo(unitPos);
             appendAction({ READ, -1 });
-            obj->plan(unitInfo.untId, this->diskId, this->getLastActionNode().endTokens, false);
+            obj->plan(unitInfo.untId, this->diskId, head->headId, this->getLastActionNode().endTokens, false);
         }
         else {
             //appendMoveTo(unitPos);
@@ -174,7 +174,7 @@ public:
     /// @param unitPos 读的位置
     void appendMoveToAllReadAndPlan(int unitPos) {
         auto unitInfo = this->disk->getUnitInfo(unitPos);
-        if (unitInfo.objId < 0) {
+        if (unitInfo.objId < 0) {//空单元
             appendMoveTo(unitPos);
             appendAction({ VREAD, -1 });
             return;
@@ -183,9 +183,9 @@ public:
         if (obj!=deletedObject && !obj->isPlaned(unitInfo.untId) && obj->isRequested(unitInfo.untId)) {
             appendMoveTo(unitPos);
             appendAction({ READ, -1 });
-            obj->plan(unitInfo.untId, this->diskId, Watch::toTimeStep(this->getLastActionNode().endTokens), false);
+            obj->plan(unitInfo.untId, this->diskId, head->headId, Watch::toTimeStep(this->getLastActionNode().endTokens), false);
         }
-        else {
+        else {//
             appendMoveTo(unitPos);
             appendAction({ VREAD, -1 });
             //appendMoveTo(unitPos);
@@ -338,7 +338,7 @@ public:
                 int readPos = ((*branchInfo.first).endPos - 1+ disk->spaceSize)%disk->spaceSize;
                 auto unitInfo = disk->getUnitInfo(readPos);
                 LOG_PLANNER << "plan unit " << unitInfo.untId<<" for obj "<<unitInfo.objId<< ", time:"<<newPlanedTime<<" on disk "<<diskId;
-                sObjectsPtr[unitInfo.objId]->plan(unitInfo.untId, this->diskId, newPlanedTime, false);
+                sObjectsPtr[unitInfo.objId]->plan(unitInfo.untId, this->diskId, head->headId, newPlanedTime, false);
             }
             branchInfo.first++;
         }
@@ -361,8 +361,10 @@ public:
     }
     
     
-    /// @brief 取消特定的有效读操作，并将该读替换为移动/跳/无效读
-    /// @param unitPos 
+    /// @brief 取消特定的有效读操作，并将该读替换为移动/跳/无效读。
+    /// 注意！该操作不应放在当前回合操作结束后使用！！否则会导致tokens计算异常！！（当前时间片行动已结束
+    /// ，但使用的最低时间还是当前时间片的时间，导致不能正常跳到下一时间片开始处的tokens）
+    /// @param unitPos 要删除的读操作的读位置
     void cancelRead(int unitPos) {
         LOG_PLANNERN(diskId) << "cancel read " << unitPos;
         ActionNode node;
@@ -375,9 +377,7 @@ public:
             it++;
         }
         if (it == actionNodes.end()) {
-            //throw std::logic_error("error! can't find read!!");
-            //现在有两个头了，出现这种情况可能因为行动在另一个头里。
-            return;
+            throw std::logic_error("error! can't find read!!");
         }
         //it为需要删除的节点。
         std::list<ActionNode> tempNodes = {};
