@@ -296,17 +296,19 @@ public:
     }
 };
 
-template<int SIZE>
+template<int SIZE, typename VALUE>
 class BplusLeafNode :public BplusNode<SIZE> {
 public:
     BplusLeafNode() :BplusNode<SIZE>::BplusNode(true) {}
-    BplusLeafNode(int key) :BplusNode<SIZE>::BplusNode(key, true) {}
-    BplusLeafNode<SIZE>* next = nullptr;
-    BplusLeafNode<SIZE>* splitNode(int key, int posInParent) {
+    BplusLeafNode(int key, VALUE* value) :BplusNode<SIZE>::BplusNode(key, true) {this->values[0] = value;}
+    BplusLeafNode<SIZE, VALUE>* next = nullptr;
+    BplusLeafNode<SIZE, VALUE>* last = nullptr;
+    VALUE* values[SIZE];
+    BplusLeafNode<SIZE, VALUE>* splitNode(int key, VALUE* value, int posInParent) {
         if (this->keyNum != SIZE) {
             LOG_BplusTree << "key number less than SIZE";
         }
-        BplusLeafNode<SIZE>* newNode = new BplusLeafNode<SIZE>();
+        BplusLeafNode<SIZE, VALUE>* newNode = new BplusLeafNode<SIZE, VALUE>();
         //找到key的位置
         LOG_BplusTreeInfo << "in adding key " << key
             << ", " << *this << " split";
@@ -330,17 +332,27 @@ public:
             memcpy(newNode->keys, this->keys + oldNum - 1, newNum * sizeof(int));
             memmove(this->keys + pos + 1, this->keys + pos, sizeof(int) * (oldNum - 1 - pos));
             this->keys[pos] = key;
+
+            memcpy(newNode->values, this->values + oldNum - 1, newNum * sizeof(VALUE*));
+            memmove(this->values + pos + 1, this->values + pos, sizeof(VALUE*) * (oldNum - 1 - pos));
+            this->values[pos] = value;
         }
         else {
             memcpy(newNode->keys, this->keys + oldNum, sizeof(int) * (pos - oldNum));
             newNode->keys[pos - oldNum] = key;
             memcpy(newNode->keys + pos - oldNum + 1, this->keys + pos, sizeof(int) * (newNum + pos - oldNum - 1));
+
+            memcpy(newNode->values, this->values + oldNum, sizeof(VALUE*) * (pos - oldNum));
+            newNode->values[pos - oldNum] = value;
+            memcpy(newNode->values + pos - oldNum + 1, this->values + pos, sizeof(VALUE*) * (newNum + pos - oldNum - 1));
         }
         this->keyNum = oldNum;
         newNode->keyNum = newNum;
 
+        this->next->last = newNode;
         newNode->next = this->next;
         this->next = newNode;
+        newNode->last = this;
 
         newNode->parent = this->parent;
         this->parent->children[posInParent] = newNode;//占据原先该节点在parent中的位置。
@@ -359,8 +371,12 @@ public:
             LOG_FILE("BplusTree") << "error: pos out of range!";
             return false;
         }
-        
+
+        if(this->values[pos]!=nullptr){
+            delete this->values[pos];
+        }
         memmove(this->keys + pos, this->keys + pos + 1, (this->keyNum - pos - 1) * sizeof(int));
+        memmove(this->values + pos, this->values + pos + 1, (this->keyNum - pos - 1) * sizeof(VALUE*));
         this->keyNum -= 1;
         if (this->keyNum == pos && this->parent) {
             int posInParent = this->getPosInParent();
@@ -370,29 +386,14 @@ public:
 
         return true;
     }
-    //void freshUpOnDelete(int freshPos) {
-    //    auto presentNode = this->parent;
-    //    BplusInnerNode<SIZE>* parentNode = nullptr;
-    //    int posInParent;
-    //    while (freshPos == presentNode->keyNum - 1) {
-    //        posInParent = presentNode->getPosInParent();
-    //        parentNode = presentNode->parent;
-    //        if (posInParent > 0) {
-    //            parentNode->keys[posInParent] = presentNode->getMaxKey();
-    //            presentNode = parentNode;
-    //            freshPos = posInParent;
-    //        }
-    //        else {
-    //            break;
-    //        }
-    //    }
-    //}
     //如果有重复的键，则失败。
-    bool addKey(int key) {
+    bool addKey(int key, VALUE* value) {
         for (int i = 0; i < this->keyNum; i++) {
             if (key < this->keys[i]) {
                 memmove(this->keys + i + 1, this->keys + i, (this->keyNum - i) * sizeof(int));
                 this->keys[i] = key;
+                memmove(this->values + i + 1, this->values + i, (this->keyNum - i) * sizeof(VALUE*));
+                this->values[i] = value;
                 this->keyNum += 1;
                 return true;
             }
@@ -402,34 +403,41 @@ public:
             }
         }
         this->keys[this->keyNum] = key;
+        this->values[this->keyNum] = value;
         this->keyNum += 1;
         return true;
     }
     //会把一切都搞定。或者什么都不做。
     bool lendKey(int posInParent, int delPos) {
-        BplusLeafNode<SIZE>* bro = nullptr;
+        BplusLeafNode<SIZE, VALUE>* bro = nullptr;
         if (posInParent < this->parent->keyNum-1) {
-            bro = static_cast<BplusLeafNode<SIZE>*>(this->parent->children[posInParent + 1]);
-            int key;
+            bro = static_cast<BplusLeafNode<SIZE, VALUE>*>(this->parent->children[posInParent + 1]);
+            int key; VALUE* value;
             key = bro->keys[0];
+            value = bro->values[0];
             if (bro->deleteKeyByPos(0)) {
                 LOG_BplusTreeInfo << "in deleting key " << this->keys[delPos]
                     << ", " << *this << " lend key from " << *bro;
                 memmove(this->keys + delPos, this->keys + delPos + 1, (this->keyNum - delPos - 1) * sizeof(int));
                 this->keys[this->keyNum - 1] = key;
+                memmove(this->values + delPos, this->values + delPos + 1, (this->keyNum - delPos - 1) * sizeof(VALUE*));
+                this->values[this->keyNum - 1] = value;
                 this->parent->keys[posInParent] = key;
                 return true;
             }
         }
         if (posInParent > 0) {
-            bro = static_cast<BplusLeafNode<SIZE>*>(this->parent->children[posInParent - 1]);
-            int key;
+            bro = static_cast<BplusLeafNode<SIZE, VALUE>*>(this->parent->children[posInParent - 1]);
+            int key; VALUE* value;
             key = bro->keys[bro->keyNum - 1];
+            value = bro->values[bro->keyNum - 1];
             if (bro->deleteKeyByPos(bro->keyNum - 1)) {
                 LOG_BplusTreeInfo << "in deleting key " << this->keys[delPos]
                     << ", " << *this << " lend key from " << *bro;
                 memmove(this->keys + 1, this->keys, delPos * sizeof(int));
                 this->keys[0] = key;
+                memmove(this->values + 1, this->values, delPos * sizeof(VALUE*));
+                this->values[0] = value;
                 this->parent->keys[posInParent - 1] = bro->getMaxKey();
                 this->parent->keys[posInParent] = this->getMaxKey();
                 this->parent->freshUpOnDelete(posInParent);
@@ -441,29 +449,35 @@ public:
     //把所有东西都放入前面那个节点中，更新parent，然后返回后面节点在parent中的位置。
     //需要在外部删除parent的
     int mergeBro(int posInParent, int delPos) {
-        BplusLeafNode<SIZE>* bro = nullptr;
+        BplusLeafNode<SIZE, VALUE>* bro = nullptr;
         if (posInParent < this->parent->keyNum-1) {
-            bro = static_cast<BplusLeafNode<SIZE>*>(this->parent->children[posInParent + 1]);
+            bro = static_cast<BplusLeafNode<SIZE, VALUE>*>(this->parent->children[posInParent + 1]);
             LOG_BplusTreeInfo << "in deleting key " << this->keys[delPos]
                 << ", " << "merge leaf node " << *bro << " to " << *this;
             memmove(this->keys + delPos, this->keys + delPos + 1, (this->keyNum - delPos - 1) * sizeof(int));
             memcpy(this->keys + this->keyNum - 1, bro->keys, (bro->keyNum) * sizeof(int));
+            memmove(this->values + delPos, this->values + delPos + 1, (this->keyNum - delPos - 1) * sizeof(VALUE*));
+            memcpy(this->values + this->keyNum - 1, bro->values, (bro->keyNum) * sizeof(VALUE*));
             this->keyNum += bro->keyNum - 1;
             this->parent->keys[posInParent] = this->getMaxKey();
             this->next = bro->next;
+            this->next->last = this;//bro由parent来删除
             LOG_BplusTreeInfo << "merged node: " << *this;
             //此时，parent的posInParent+1上的key不正确，但是child正确。
             return posInParent + 1;
         }
         else if (posInParent > 0) {//这种情况下可能会破坏head节点。需要在外面操作。
-            bro = static_cast<BplusLeafNode<SIZE>*>(this->parent->children[posInParent - 1]);
+            bro = static_cast<BplusLeafNode<SIZE, VALUE>*>(this->parent->children[posInParent - 1]);
             LOG_BplusTreeInfo << "in deleting key " << this->keys[delPos]
                 << ", " << "merge leaf node " << *this << " to " << *bro;
             memcpy(bro->keys + bro->keyNum, this->keys, delPos * sizeof(int));
             memcpy(bro->keys + bro->keyNum + delPos, this->keys + delPos + 1, (this->keyNum - delPos - 1) * sizeof(int));
+            memcpy(bro->values + bro->keyNum, this->values, delPos * sizeof(VALUE*));
+            memcpy(bro->values + bro->keyNum + delPos, this->values + delPos + 1, (this->keyNum - delPos - 1) * sizeof(VALUE*));
             bro->keyNum += this->keyNum - 1;
             this->parent->keys[posInParent - 1] = bro->getMaxKey();
             bro->next = this->next;
+            bro->next->last = bro;
             LOG_BplusTreeInfo << "merged node: " << *bro;
             return posInParent;
         }
@@ -474,118 +488,36 @@ public:
     }
 };
 
-template<int SIZE>
+template<int SIZE, typename VALUE>
 class BplusTree;
 
-template<int SIZE>
-LogStream& operator<<(LogStream& s, const BplusTree<SIZE>& v);
+template<int SIZE, typename VALUE>
+LogStream& operator<<(LogStream& s, const BplusTree<SIZE, VALUE>& v);
 
 
 
-template<int SIZE>
+template<int SIZE, typename VALUE>
 class BplusTree {
     typedef BplusNode<SIZE> Node;
-    typedef BplusLeafNode<SIZE> LeafNode;
+    typedef BplusLeafNode<SIZE, VALUE> LeafNode;
     typedef BplusInnerNode<SIZE> InnerNode;
 private:
-    template<int T>
-    friend LogStream& operator<<(LogStream& s, const BplusTree<T>& v);
+    template<int SIZELOG, typename VALUELOG>
+    friend LogStream& operator<<(LogStream& s, const BplusTree<SIZELOG, VALUELOG>& v);
     InnerNode* root;
     LeafNode* head = nullptr;
     int keyNum;
     //head是节点粒度。anchor是key粒度。
 
 public:
-    struct Iterator {
-    private:
-        int startKey = 0;
-        int pos = 0;
-        LeafNode* node;
-        bool end;
-        BplusTree<SIZE>* tree;
-    public:
-        Iterator():end(true){}
-        Iterator(BplusTree<SIZE>* tree, LeafNode* node, int pos) :end(false) {
-            this->pos = pos;
-            this->node = node;
-            this->startKey = node->keys[pos];
-            this->tree = tree;
-        }
-        Iterator(BplusTree<SIZE>* tree, LeafNode* node, int pos, int startKey, bool end) {
-            this->pos = pos;
-            this->node = node;
-            this->startKey = startKey;
-            this->end = end;
-            this->tree = tree;
-        }
-        int getKey() {
-            if (this->end) {
-                throw std::out_of_range("is end!");
-            };
-            return this->node->keys[this->pos];
-        }
-        Iterator& toNext() {
-            if (this->end) {
-                return *this;
-            }
-            if (this->node->keyNum - 1 > this->pos) {
-                this->pos += 1;
-            }
-            else {
-                this->node = this->node->next;
-                this->pos = 0;
-            }
-            if (getKey() == this->startKey) {
-                this->end = true;
-            }
-            return *this;
-        }
-        Iterator getNext() {
-            if (this->end) {
-                return Iterator();
-            }
-            int pos; LeafNode* node;
-            if (this->node->keyNum - 1 > this->pos) {
-                pos = this->pos + 1;
-                node = this->node;
-            }
-            else {
-                node = this->node->next;
-                pos = 0;
-            }
-            if (getKey() == this->startKey) {
-                return Iterator();
-            }
-            else {
-                return Iterator(tree, node, pos, this->startKey, end);
-            }
-        }
-        bool isEnd() {
-            return end;
-        }
-        int getStartKey() { return this->startKey; }
-        Iterator& toNoLessThan(int key) {
-            Iterator tempIter = tree->iteratorAt(key);
-            int reqKey = tempIter.getKey();
-            while ((!this->isEnd()) && this->getKey() != reqKey) {
-                this->toNext();
-            }
-            return *this;
-        }
-        //public:
-        //    //有风险，它无法保证插入或者删除节点之后内部保存的节点还有效
-        //    //可以把Anchor存在该对象中来保证，如果插入或者删除了节点就把Anchor内部参数置为无效?
-        //    Anchor(LeafNode* n, int p) :pos(p) { node = *n; }
-    };
-
     struct Anchor {
     private:
         int leftKey = 0;
         int pos = 0;
         LeafNode* node;
-        BplusTree<SIZE>* tree;
+        BplusTree<SIZE, VALUE>* tree;
     public:
-        Anchor(BplusTree<SIZE>* tree, LeafNode* node, int pos, int keyNum) :leftKey(keyNum),tree(tree) {
+        Anchor(BplusTree<SIZE, VALUE>* tree, LeafNode* node, int pos, int keyNum) :leftKey(keyNum),tree(tree) {
             this->pos = pos;
             this->node = node;
         }
@@ -594,6 +526,12 @@ public:
                 throw std::out_of_range("is end!");
             };
             return this->node->keys[this->pos];
+        }
+        VALUE* getValue(){
+            if (this->leftKey<=0) {
+                throw std::out_of_range("is end!");
+            };
+            return this->node->values[this->pos];
         }
         Anchor& toNext() {
             if (this->leftKey==0) {
@@ -609,6 +547,20 @@ public:
             this->leftKey--;
             return *this;
         }
+        Anchor& toLast() {
+            if(this->leftKey >= tree->keyNum){
+                return *this;//在起始位置。只能向前走。
+            }
+            if (this->pos > 0) {
+                this->pos -= 1;
+            }
+            else {
+                this->node = this->node->last;
+                this->pos = this->node->keyNum - 1;
+            }
+            this->leftKey++;
+            return *this;
+        }
         Anchor getNext() {
             if (this->leftKey==0) {
                 throw std::logic_error("has to end");
@@ -619,6 +571,9 @@ public:
         }
         bool isEnd() {
             return this->leftKey==0;
+        }
+        bool isBegin() {
+            return this->leftKey==tree->keyNum;
         }
         Anchor& toNoLessThan(int key) {
             Anchor tempIter = tree->anchorAt(key);
@@ -635,11 +590,12 @@ public:
         root->parent = nullptr;//必须赋nullptr。InnerNode如果没有parent则不受最小节点限制。
         LOG_BplusTree << "init bplus tree over.";
     }
-    void insert(int key) {
+    void insert(int key, VALUE* value) {
         LOG_BplusTreeN(id) << "insert key" << key;
         if (root->keyNum == 0) {
-            head = new LeafNode(key);
+            head = new LeafNode(key, value);
             head->next = head;
+            head->last = head;
             head->parent = root;
 
             root->keys[root->keyNum] = key;
@@ -664,16 +620,17 @@ public:
                 node = static_cast<InnerNode*>(node)->children[parentPos.top()];
             }
             //给叶子节点插入key
+            assert(value == nullptr);
             LeafNode* leafNode = static_cast<LeafNode*>(node);
             if (leafNode->isFull()) {//键已满
                 
-                auto leftLeafNode = leafNode->splitNode(key, parentPos.top());
+                auto leftLeafNode = leafNode->splitNode(key, value, parentPos.top());
                 LOG_BplusTreeN(id) << "split node to " << *leftLeafNode << " and " << *leftLeafNode->next;
                 keyNum += 1;
                 int newKey = leafNode->getMaxKey();
                 splitInnerNode(newKey, leafNode->parent, leftLeafNode, parentPos);
             }else{
-                if (!leafNode->addKey(key)) {
+                if (!leafNode->addKey(key, value)) {
                     return;
                 }else{
                     keyNum += 1;
@@ -819,37 +776,6 @@ public:
     }
 
     int getKeyNum(){return keyNum;}
-    //设置Anchor指向的key（如果不存在则指向前一个）
-    Iterator iteratorAt(int key, bool setHead = false) {
-        if (head == nullptr) {
-            LOG_BplusTreeN(this->id) << "fail: tree has no key!";
-            throw std::runtime_error("Tree has no key. Add key before setAnchor!");
-        }
-        //找到叶子节点
-        Node* node = root;
-        int pos;
-        while (!node->isLeaf) {
-            pos = node->searchKey(key);
-            if (pos == node->keyNum) {//如果pos比当前最大的还要大。
-                while (!node->isLeaf) {
-                    //直接搜索当前节点的最大值节点。
-                    node = static_cast<InnerNode*>(node)->children[node->keyNum - 1];
-                }
-                if (setHead) {
-                    head = static_cast<LeafNode*>(node)->next;
-                }
-                return Iterator(this, static_cast<LeafNode*>(node)->next, 0);
-            }
-            else {
-                node = static_cast<InnerNode*>(node)->children[pos];
-            }
-        }
-        pos = node->searchKey(key);
-        if (setHead) {
-            head = static_cast<LeafNode*>(node);
-        }
-        return Iterator(this,static_cast<LeafNode*>(node), pos);
-    }
     Anchor anchorAt(int key) {
         if (head == nullptr) {
             assert(this->keyNum == 0);

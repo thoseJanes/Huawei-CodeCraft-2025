@@ -6,6 +6,7 @@
 #include <assert.h>
 #include "global.h"
 #include "watch.h"
+#include "indicator.h"
 
 class Object;
 LogStream& operator<<(LogStream& s, const Object& obj);
@@ -96,13 +97,15 @@ public:
     //基本规划信息
     int* unitReqNum;//相应位置单元上的剩余请求数
     int* unitReqNumOrder;//哪个单元的req最大，哪个单元就在前面。
-    int* planReqUnit;//相应位置的单元是否已经被规划,如果被规划，记录分配的磁盘，否则置-1（防止其它磁盘再读）
+    int* planReqDisk;//相应位置的单元是否已经被规划,如果被规划，记录分配的磁盘，否则置-1（防止其它磁盘再读）
     int* planReqHead;//记录规划分配的磁头
     int* planReqTime;//相应位置的单元被规划完成的时间,记录该单元完成读请求的时间，否则置-1（防止其它磁盘再读）
     //每次规划使用
     int* planBuffer;//大小为size//给branch用于临时比较代价的buffer。使用完需要置负一。也可以给连读策略用。判断是否已经被规划。
     //价值（优化方向：当前直接使用下一时刻的边缘，动态分配后可以保存多个时刻的边缘。
+    #ifdef ENABLE_OBJECTSCORE
     int score = 0;//当前请求剩余的总分数
+    #endif
     int edgeValue = 0;//下一个时间步分数降低多少
     int* coScore;
     int* coEdgeValue;
@@ -115,7 +118,7 @@ public:
         for(int i=0;i<REP_NUM;i++){
             this->unitOnDisk[i] = this->unitReqNum + size*(i+1);
         }
-        this->planReqUnit = this->unitReqNum + size*(REP_NUM+1);
+        this->planReqDisk = this->unitReqNum + size*(REP_NUM+1);
         this->planReqHead = this->unitReqNum + size*(REP_NUM+7);
         this->planReqTime = this->unitReqNum + size*(REP_NUM+2);
         this->unitReqNumOrder = this->unitReqNum + size*(REP_NUM+3);//在commitunit时维护。
@@ -128,7 +131,7 @@ public:
         //初始化
         for(int i=0;i<size;i++){
             this->unitReqNum[i] = 0;
-            this->planReqUnit[i] = -1;
+            this->planReqDisk[i] = -1;
             this->planReqHead[i] = -1;
             this->planReqTime[i] = -1;
             this->planBuffer[i] = -1;
@@ -143,7 +146,7 @@ public:
     }
 
     // bool isPlaned(int unitId){
-    //     if(this->planReqUnit[unitId]>=0){
+    //     if(this->planReqDisk[unitId]>=0){
     //         return true;
     //     }
     //     return false;
@@ -159,7 +162,7 @@ public:
         return flag;
     }
     bool isPlaned(int unitId) const {
-        if(this->planReqUnit[unitId]>=0
+        if(this->planReqDisk[unitId]>=0
             && planReqTime[unitId]>=Watch::getTime()){
             return true;
         }
@@ -169,14 +172,14 @@ public:
         return this->unitReqNum[unitId] > 0;
     }
     int planedBy(int unitId){
-        if(this->planReqUnit[unitId]>=0){
-            return this->planReqUnit[unitId];
+        if(this->planReqDisk[unitId]>=0){
+            return this->planReqDisk[unitId];
         }else{
             return -1;
         }
     }
     void plan(int unitId, int diskId, int headId){
-        this->planReqUnit[unitId] = diskId;
+        this->planReqDisk[unitId] = diskId;
         this->planReqHead[unitId] = headId;
         this->planReqTime[unitId] = Watch::getTime();
     }
@@ -186,7 +189,7 @@ public:
         }else{
             this->planReqTime[unitId] = timeRequired;
         }
-        this->planReqUnit[unitId] = diskId;
+        this->planReqDisk[unitId] = diskId;
         this->planReqHead[unitId] = headId;
     }
     void test_plan(int unitId, int diskId, int headId, int timeRequired, bool isOffset){
@@ -195,11 +198,11 @@ public:
         }else{
             assert(this->planReqTime[unitId] == timeRequired);
         }
-        assert(this->planReqUnit[unitId] = diskId);
+        assert(this->planReqDisk[unitId] = diskId);
         assert(this->planReqHead[unitId] = headId);
     }
     void clearPlaned(int unitId){
-        this->planReqUnit[unitId] = -1;
+        this->planReqDisk[unitId] = -1;
         this->planReqHead[unitId] = -1;
         this->planReqTime[unitId] = 0;
     }
@@ -258,6 +261,7 @@ public:
     
     //无法正确计算分数。会受到原planBuffer的影响。
     //会直接把分数累加到输入量上。
+    
     void calScoreAndClearPlanBuffer(int* getScore, int* getEdge, int* getReqNum){
         // *getScore = 0;
         // *getEdge = 0;
@@ -267,10 +271,12 @@ public:
             int unitId = this->unitReqNumOrder[i];
             if(this->planBuffer[unitId] >= Watch::getTime()){
                 earliestGetTime = std::max(this->planBuffer[unitId], earliestGetTime);
+                #ifdef ENABLE_OBJECTSCORE
                 //*getScore += 1+std::max(this->coScore[unitId] - this->coEdgeValue[unitId]*(earliestGetTime - Watch::getTime()), 0);
                 for (int j = i; j < size; j++) {
                     *getScore += this->coScore[j]/(j+1);
                 }
+                #endif
                 *getEdge += this->coEdgeValue[unitId];//一个简单的Edge，没有考虑到具体时间。
                 *getReqNum += this->unitReqNum[unitId];
                 this->planBuffer[unitId] = -1;//计算完了这一阶段的分数，把buffer归-1.
@@ -283,7 +289,9 @@ public:
     //会直接把分数累加到输入量上。
     void calUnitScoreAndEdge(int unitId, int* getScore, int* getEdge){//会用四倍！
         for(int i=this->size-1;i>=0;i--){
+            #ifdef ENABLE_OBJECTSCORE
             *getScore += this->coScore[i]/(i+1);
+            #endif
             *getEdge += this->coEdgeValue[i]/(i+1);
             if(this->unitReqNumOrder[i] == unitId){
                 return;
@@ -295,19 +303,12 @@ public:
     /// @param unitId unit order in object
     /// @param doneRequestIds requests completed by this unit will be push_back to this vector.
     void commitUnit(int unitId, std::vector<int>* doneRequestIds){
-        if(unitId>=size){
-            throw std::out_of_range("obj unit out of range!");
-        }
-        
         //删除请求，更新完成请求。更新分数。
         auto it=objRequests.begin();
         while(it!=objRequests.end()){
             Request* request = *it;
             bool freshed = request->commitUnit(unitId);
             int getScore;int getEdge;
-            if (Watch::getTime() == 394 && objId == 897) {
-                int test = 0;
-            }
             if(request->is_done > 0){//只要有请求done了，被完成的一定是剩余单元数最大的请求。
                 assert(unitId==unitReqNumOrder[0]);
                 LOG_REQUEST<<"request "<<request->reqId<<" done";
@@ -315,6 +316,7 @@ public:
 
                 request->calScore(this->size, &getScore, &getEdge);
                 flowDownScoreAndEdge(0, getScore, getEdge);
+                Indicator::score += getScore;
                 deleteRequest(request->reqId);
                 it = objRequests.erase(it);//it会指向被删除元素的下一个元素
             }else if(freshed){
@@ -345,7 +347,6 @@ public:
     std::vector<int> createRequest(int reqId){//返回新的单元请求。
         Request* request = new Request(reqId, objId, this->size);
         std::vector<int> newReqUnit = {};
-        LOG_REQUEST << "create request "<<reqId <<" for object "<<objId;
         
         this->objRequests.push_back(request);
         requestsPtr[reqId] = request;
@@ -358,7 +359,6 @@ public:
 
         //更新分数和边缘价值
         pushRequestScoreAndEdge();
-
         return newReqUnit;
     }
 
@@ -420,38 +420,43 @@ public:
         return reqUnitSize;
     }
     
-    //score相关。更新score。
+    //score和edge相关。更新score。
     void pushRequestScoreAndEdge(){
+        #ifdef ENABLE_OBJECTSCORE
         this->score += START_SCORE*SCORE_FACTOR(size);//同一个对象最多支持2万个请求的计分。超过的话有可能分数值溢出。
-        this->edgeValue += PHASE_ONE_EDGE*SCORE_FACTOR(size);//开始时每秒减5分，后续阶段由worker更新。
         this->coScore[this->size-1] += START_SCORE*SCORE_FACTOR(size);
+        #endif
+        this->edgeValue += PHASE_ONE_EDGE*SCORE_FACTOR(size);//开始时每秒减5分，后续阶段由worker更新。
         this->coEdgeValue[this->size-1] += PHASE_ONE_EDGE*SCORE_FACTOR(size);
     }
     void flowDownScoreAndEdge(int coValue, int score, int edge){
         assert(coValue>=0 && coValue < size);
         if(coValue==0){
-            this->edgeValue -= edge;
+            #ifdef ENABLE_OBJECTSCORE
             this->score -= score;
-            this->coEdgeValue[0] -= edge;
             this->coScore[0] -= score;
+            #endif
+            this->edgeValue -= edge;
+            this->coEdgeValue[0] -= edge;
+            
         }else{
+            #ifdef ENABLE_OBJECTSCORE
             this->coScore[coValue] -= score;//协同值比索引大1.
-            this->coEdgeValue[coValue] -= edge;
             this->coScore[coValue-1] += score;
+            #endif
+            this->coEdgeValue[coValue] -= edge;
             this->coEdgeValue[coValue-1] += edge;
         }
     }
+    #ifdef ENABLE_OBJECTSCORE
     void clockScore(){
         this->score -= this->edgeValue;
         for(int i=0;i<this->size;i++){
             this->coScore[i] -= this->coEdgeValue[i];
         }
     }
+    #endif
     void freshPhaseTwoEdge(int coValue){
-        if (objId == 3110) {
-            int test = 0;
-            int test2 = test+3;
-        }
         this->edgeValue += (PHASE_TWO_EDGE - PHASE_ONE_EDGE)*SCORE_FACTOR(size);
         this->coEdgeValue[coValue-1] += (PHASE_TWO_EDGE - PHASE_ONE_EDGE)*SCORE_FACTOR(size);
     }
@@ -460,10 +465,13 @@ public:
         this->coEdgeValue[coValue-1] -= PHASE_TWO_EDGE*SCORE_FACTOR(size);
     }
     void freshOvertimeReq(int coValue, int score, int edge){
-        this->edgeValue -= edge;
+        #ifdef ENABLE_OBJECTSCORE
         this->score -= score;
-        this->coEdgeValue[coValue-1] -= edge;
         this->coScore[coValue-1] -= score;
+        #endif
+        this->edgeValue -= edge;
+        this->coEdgeValue[coValue-1] -= edge;
+        
     }
     
     

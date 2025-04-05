@@ -14,25 +14,28 @@ void start(){
     fflush(stdout);
 }
 
-void logTimeStamp(std::vector<std::pair<std::string, int>> logFiles){
+void logTimeStamp(std::vector<std::tuple<std::string, int, bool>> logFiles){
     for(int i=0;i<logFiles.size();i++){
-        if (logFiles[i].second > 0) {
-            for (int j = 0; j < logFiles[i].second; j++) {
-                LOG_FILE(logFiles[i].first + std::to_string(j)) << "\n\nTIMESTAMP " << Watch::getTime() << "\n";
+        if(std::get<2>(logFiles[i])){
+            if (std::get<1>(logFiles[i]) > 0) {
+                for (int j = 0; j < std::get<1>(logFiles[i]); j++) {
+                    LOG_FILE(std::get<0>(logFiles[i]) + std::to_string(j)) << "\n\nTIMESTAMP " << Watch::getTime() << "\n";
+                }
             }
+            LOG_FILE(std::get<0>(logFiles[i])) << "\n\nTIMESTAMP " << Watch::getTime() << "\n";
         }
-        LOG_FILE(logFiles[i].first) << "\n\nTIMESTAMP " << Watch::getTime() << "\n";
+        
     }
 };
 
-void addLogFiles(std::vector<std::pair<std::string, int>> logFiles) {
+void addLogFiles(std::vector<std::tuple<std::string, int, bool>> logFiles) {
     for (int i = 0; i < logFiles.size(); i++) {
-        if (logFiles[i].second > 0) {
-            for (int j = 0; j < logFiles[i].second; j++) {
-                LogFileManager::addLogFile(logFiles[i].first + std::to_string(j));
+        if (std::get<1>(logFiles[i]) > 0) {
+            for (int j = 0; j < std::get<1>(logFiles[i]); j++) {
+                LogFileManager::addLogFile(std::get<0>(logFiles[i]) + std::to_string(j));
             }
         }
-        LogFileManager::addLogFile(logFiles[i].first);
+        LogFileManager::addLogFile(std::get<0>(logFiles[i]));
     }
 }
 
@@ -45,10 +48,12 @@ void test_numericalOverflowTest(){
 }
 
 void test_validObjectReq_testPlanner(Worker& worker){
+    #ifdef ENABLE_OBJECTSCORE
     for (int i = 0; i < requestedObjects.size(); i++) {
         auto obj = requestedObjects[i];
         obj->test_validRequestsTest();
     }
+    #endif
     auto manager = worker.getDiskManager();
     for (int i = 0; i < N; i++) {
         for(int j=0;j<HEAD_NUM;j++){
@@ -87,19 +92,21 @@ int main()
     scanf("%d%d%d%d%d%d", &T, &M, &N, &V, &G, &K);
     LOG_INIT <<"T:"<<T<<", M:"<<M<<", N:"<<N<<", V:"<<V<<", G:"<<G<<"\n";
 
-    const std::vector<std::pair<std::string, int>> logFiles = {
-    // {"main", -1},
-    // {"disk",N},
-    // {"BplusTree",N},
-    // {"circularLinkedList",N},
-    // {"worker",-1},
-    // {"bucketData",-1},
-    // {"request",-1},
-    // {"object",-1},
-    // {"actions",N},
-    // {"planner",N},
-    {"ipcInfo",-1},
-    //{"bPlusTreeTest", -1}
+    //文件名/序号数量/是否打印时间帧
+    const std::vector<std::tuple<std::string, int, bool>> logFiles = {
+    // {"main", -1, true},
+    // {"disk",N, true},
+    // {"BplusTree",N, true},
+    // {"circularLinkedList",N, true},
+    // {"worker",-1, true},
+    // {"bucketData",-1, true},
+    // {"request",-1, true},
+    // {"object",-1, true},
+    // {"actions",N, true},
+    // {"planner",N, true},
+    //{"ipcInfo",-1, true},
+    //{"bPlusTreeTest", -1, true},
+    {"score", -1, false}
     };
     //addLogFiles(logFiles);
 
@@ -116,14 +123,16 @@ int main()
     LOG_INIT << "start loop";
 
     for (int t = 1; t <= T + EXTRA_TIME; t++) {
-        // if (t == 1) {
-        //   addLogFiles(logFiles);
-        // }
+        if (t == 1) {
+          addLogFiles(logFiles);
+        }
         Watch::clock();
         worker.correctWatch();
         //logTimeStamp(logFiles);
         worker.freshDiskTokens();
+        #ifdef ENABLE_OBJECTSCORE
         worker.freshObjectScore();//必须在clearOvertimeReq之前。
+        #endif
         worker.freshPhaseTwoReq();//考虑了请求超时可能有单元被取消。
 
         // test_validObjectReq_testPlanner(worker);
@@ -140,7 +149,11 @@ int main()
                 printf("0\n");
             }
             fflush(stdout);
+            LOG_SCORE<<"TIME:"<<Watch::getTime()<<", score:"
+                <<Indicator::score/8<<", loss:"<<Indicator::loss/8
+                <<", tol:"<<(Indicator::score - Indicator::loss)/8;
         }
+
     }
     //clean();
 

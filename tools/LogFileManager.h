@@ -11,7 +11,7 @@ class LogFileManager {
 public:
     static void addLogFile(const string fileName) {
         if (!existFile(fileName)) {
-            string filePath = logFilePath + "\\" + fileName;
+            string filePath = logFilePath + "/" + fileName;
             std::unique_ptr<FileRoller> fileRoller = std::make_unique<FileRoller>(filePath);
             fileNameToLogFile[fileName] = new LogFile(fileRoller);
         }

@@ -15,14 +15,14 @@ struct ActionNode {
     int endPos;
     int endTokens;
 };
+
 class DiskProcessor;
 class HeadPlanner {//全局plan，其中的tokens为全局tokens。
 private:
     friend LogStream& operator<<(LogStream& s, HeadPlanner& headPlanner);
-    //保持对disk的引用。
-    Disk* disk;
     //属于哪个头的规划器
     DiskHead* head;
+    
     //分支树
     std::map<int, std::pair<std::list<ActionNode>::iterator, HeadPlanner*>> readBranches = {};
     //分支行动。分别为：增加读的位置/创建分支的位置/分支策略。
@@ -31,14 +31,15 @@ private:
 public:
     const int spaceSize;
     const int diskId;
+    DiskProcessor* diskPcs;
 
     // HeadPlanner(int readConsume, int headpos, int spacesize):
     //     nextReadConsume(readConsume), orgHeadPos(headpos), spaceSize(spacesize){}
 public:
-    HeadPlanner(Disk* planDisk, DiskHead* diskHead) :
+    HeadPlanner(DiskProcessor* diskPcs, DiskHead* diskHead) :
         spaceSize(diskHead->spaceSize),
-        diskId(planDisk->diskId),
-        disk(planDisk),
+        diskId(diskHead->diskId),
+        diskPcs(diskPcs),
         head(diskHead)
     {
         if (head->tokensOffset != 0) {
@@ -48,10 +49,10 @@ public:
         assert(G - head->presentTokens == 0);
     }
     //用一个actionNode来创建分支。
-    HeadPlanner(Disk* disk, DiskHead* diskHead, const ActionNode& actionNode) :
+    HeadPlanner(DiskProcessor* diskPcs, DiskHead* diskHead, const ActionNode& actionNode) :
         spaceSize(diskHead->spaceSize),
-        diskId(disk->diskId),
-        disk(disk),
+        diskId(diskHead->diskId),
+        diskPcs(diskPcs),
         head(diskHead)
     {
         int aheadRead = 0;
@@ -156,42 +157,10 @@ public:
 
     /// @brief 规划移动到某个位置并进行有效读
     /// @param unitPos 读的位置
-    void appendMoveToUnplannedReadAndPlan(int unitPos) {
-        auto unitInfo = this->disk->getUnitInfo(unitPos);
-        auto obj = sObjectsPtr[unitInfo.objId];
-        if (!obj->isPlaned(unitInfo.untId) && obj->isRequested(unitInfo.untId) ) {
-            appendMoveTo(unitPos);
-            appendAction({ READ, -1 });
-            obj->plan(unitInfo.untId, this->diskId, head->headId, this->getLastActionNode().endTokens, false);
-        }
-        else {
-            //appendMoveTo(unitPos);
-            //appendAction({ READ, -1 });
-            throw std::logic_error("this unit can not be planned!");
-        }
-    }
+    void appendMoveToUnplannedReadAndPlan(int unitPos);
     /// @brief 规划移动到某个位置并进行有效或无效读，读的类型由函数根据object判断。
     /// @param unitPos 读的位置
-    void appendMoveToAllReadAndPlan(int unitPos) {
-        auto unitInfo = this->disk->getUnitInfo(unitPos);
-        if (unitInfo.objId < 0) {//空单元
-            appendMoveTo(unitPos);
-            appendAction({ VREAD, -1 });
-            return;
-        }
-        auto obj = sObjectsPtr[unitInfo.objId];
-        if (obj!=deletedObject && !obj->isPlaned(unitInfo.untId) && obj->isRequested(unitInfo.untId)) {
-            appendMoveTo(unitPos);
-            appendAction({ READ, -1 });
-            obj->plan(unitInfo.untId, this->diskId, head->headId, Watch::toTimeStep(this->getLastActionNode().endTokens), false);
-        }
-        else {//
-            appendMoveTo(unitPos);
-            appendAction({ VREAD, -1 });
-            //appendMoveTo(unitPos);
-            //appendAction({ VREAD, -1 });
-        }
-    }
+    void appendMoveToAllReadAndPlan(int unitPos);
     /// @brief 规划移动到某个位置。如果尝试进行读来移动，需要提供磁头之后的行为信息。
     /// @param unitPos 移动到的位置
     /// @param tryToRead 是否尝试进行无效读来移动磁头（优化方向：可以全设置为有效读，重点在于得同时设置对象的planed属性，在特定情况下可以优化开销）
@@ -204,7 +173,7 @@ public:
         if (this->readBranches.size()) {
             std::logic_error("should not append when has branch");
         }
-        int distance = disk->getDistance(unitPos, this->getLastActionNode().endPos);//choseRep已经算过了一遍，这里再算一遍？！
+        int distance = getDistance(unitPos, this->getLastActionNode().endPos, spaceSize);//choseRep已经算过了一遍，这里再算一遍？！
         assert(distance >= 0);
         if (distance) {
             int leftTokens = G - this->getLastActionNode().endTokens % G;
@@ -272,93 +241,11 @@ public:
     // std::vector<std::pair<HeadAction, int>> getActions(){return actions;}
 
     //规划性质：插入读操作，策略为选择最近插入位置。
-    void insertUnplannedReadAsBranch(int unitPos, int* getReadOverTokens, int* getScoreLoss) {
-        LOG_PLANNERN(diskId) << "\ninserting read on " << unitPos << "as new branch";
-        int pstDist;
-        auto aftIt = getShortestDistance(unitPos, &pstDist);
-        LOG_PLANNERN(diskId) << "shortest distance node " << *aftIt << " in "<< actionNodes;
-        HeadPlanner* branch = new HeadPlanner(disk, head, *(aftIt));
-        readBranches.insert({ unitPos, {aftIt, branch} });
-        branch->appendMoveTo(unitPos);
-        branch->appendAction({ READ, -1 });
-        *getReadOverTokens = branch->getLastActionNode().endTokens;
-        auto test_lastPos = (*aftIt).action.action;
-        aftIt++;
-        
-        if (aftIt != this->actionNodes.end()) {
-            auto nextAction = (*aftIt).action.action;
-            if (nextAction == PASS || nextAction == JUMP) {
-                branch->appendMoveTo((*aftIt).endPos);
-                aftIt++;
-            }
-            else if ((nextAction == READ || nextAction == VREAD) 
-                    && (test_lastPos == READ || test_lastPos == VREAD)) {
-                throw std::logic_error("duplicate read plan");
-                //throw std::logic_error("error!!");
-                //如果是READ，那么上一个endPos距离unitPos最近且为下一个位置减1,那么上一个endPos就是uniPos。
-                //assert(branch->actionNodes.front().endPos == unitPos);
-                //但是它既然停在了上一个位置，又没有读。就很奇怪了。不读为什么要停在那。
-                //throw std::logic_error("strange!!!");
-                //因为规划不是按顺序来的。
-            }//如果是JUMP，直接appendAction即可。
-        }
-
-        std::vector<Object*> relatedObjects = {};
-        while (aftIt != this->actionNodes.end()) {
-            branch->appendAction((*aftIt).action, true);
-            const ActionNode& newNode = branch->getLastActionNode();
-            if (getScoreLoss != nullptr && newNode.action.action == READ) {//规划，VREAD不需要规划。
-                auto unitInfo = disk->getUnitInfo((newNode.endPos - 1 + disk->spaceSize)%disk->spaceSize);
-                Object* obj = sObjectsPtr[unitInfo.objId];
-                obj->virBranchPlan(unitInfo.untId, Watch::toTimeStep(newNode.endTokens), false);
-                relatedObjects.push_back(obj);
-            }
-            aftIt++;
-        }
-        LOG_PLANNERN(diskId) << "generate branch " << branch->actionNodes;
-        if (getScoreLoss != nullptr) {
-            for (int i = 0; i < relatedObjects.size(); i++) {
-                *getScoreLoss += relatedObjects[i]->getScoreLoss();
-            }
-        }
-        //向后移动看看能不能改进总价值?
-    }
+    void insertUnplannedReadAsBranch(int unitPos, int* getReadOverTokens, int* getScoreLoss);
     //用分支修改主干,会更新planed值。
-    void mergeUnplannedReadBranch(int unitPos) {
-        LOG_PLANNERN(diskId) << "\nmerge branch on reading "<<unitPos;
-        auto branchInfo = this->readBranches.at(unitPos);
-        actionNodes.erase(std::next(branchInfo.first, 1), actionNodes.end());//删除branchInfo.first之后的节点。
-        actionNodes.splice(actionNodes.end(), branchInfo.second->actionNodes,
-            std::next(branchInfo.second->actionNodes.begin(), 1), branchInfo.second->actionNodes.end());//把branch的分支移动过来。
-        branchInfo.first++;//移动到新的拼接部分的节点上。
-        while (branchInfo.first != this->actionNodes.end()) {//规划读操作
-            LOG_PLANNERN(diskId) << "on node " << *branchInfo.first;
-            if ((*branchInfo.first).action.action == READ) {
-                int newPlanedTime = Watch::toTimeStep((*branchInfo.first).endTokens);
-                int readPos = ((*branchInfo.first).endPos - 1+ disk->spaceSize)%disk->spaceSize;
-                auto unitInfo = disk->getUnitInfo(readPos);
-                LOG_PLANNER << "plan unit " << unitInfo.untId<<" for obj "<<unitInfo.objId<< ", time:"<<newPlanedTime<<" on disk "<<diskId;
-                sObjectsPtr[unitInfo.objId]->plan(unitInfo.untId, this->diskId, head->headId, newPlanedTime, false);
-            }
-            branchInfo.first++;
-        }
-
-        this->readBranches.erase(unitPos);
-        for (auto it = this->readBranches.begin(); it != this->readBranches.end(); it++) {
-            delete (*it).second.second;//删除除了当前分支外的所有分支
-        }
-        this->readBranches.clear();
-
-        this->readBranches = std::move(branchInfo.second->readBranches);//把branch的分支移动到当前。
-        delete branchInfo.second;
-    }
+    void mergeUnplannedReadBranch(int unitPos);
     //删除分支
-    void dropReadBranch(int unitPos) {
-        LOG_PLANNERN(diskId) << "\ndrop branch on reading " << unitPos;
-        auto branchInfo = this->readBranches.at(unitPos);
-        this->readBranches.erase(unitPos);
-        delete branchInfo.second;
-    }
+    void dropReadBranch(int unitPos);
     
     
     /// @brief 取消特定的有效读操作，并将该读替换为移动/跳/无效读。
@@ -451,7 +338,7 @@ public:
             HeadOperator operation = { PASS, head->presentTokens };
             this->actionNodes.front().endTokens += operation.passTimes;
             this->actionNodes.front().endPos += operation.passTimes;
-            this->actionNodes.front().endPos %= disk->spaceSize;
+            this->actionNodes.front().endPos %= spaceSize;
             head->beginAction(operation);
             head->completeAction(handledOperation, completedRead);
             this->actionNodes.front().action.aheadRead = 0;
@@ -469,7 +356,7 @@ public:
         actionNodes.erase(std::next(actionNodes.begin()), nextIt);
         LOG_PLANNERN(diskId) << "over excute, plan: " << actionNodes << ",read:"<<*completedRead<<",handled:"<<*handledOperation<<",headpos:"<<head->headPos;
     }
-    const Disk* getDisk() const { return this->disk; }
+    const Disk* getDisk() const;
     const DiskHead* getHead() const {return this->head;}
 
     //返回最小距离处的前一个节点。该节点执行完毕后即为最小距离。
@@ -489,24 +376,8 @@ public:
         return aheadIt;
     }
     
-    void test_syncWithHeadTest() const {
-        if (this->actionNodes.front().endPos != head->headPos) {
-            std::logic_error("the planner status not sync with head!!!");
-        }
-    }
-    void test_nodeContinuousTest() const {
-        HeadPlanner* testPlanner = new HeadPlanner(disk, head, this->actionNodes.front());
-        LOG_PLANNERN(diskId) << "testContinuous test begin";
-        for (auto it = std::next(actionNodes.begin(), 1); it != actionNodes.end(); it++) {
-            testPlanner->appendAction((*it).action);
-            auto testNode = testPlanner->getLastActionNode();
-            assert(testNode.endPos == (*it).endPos);
-            //assert(testNode.endTokens == (*it).endTokens);tokens不一定连着
-            assert(testNode.action.param == (*it).action.param);
-        }
-        LOG_PLANNERN(diskId) << "testContinuous test over";
-        delete testPlanner;
-    }
+    void test_syncWithHeadTest() const;
+    void test_nodeContinuousTest() const;
     void test_branchAndMainConsistency() const {
 
     }

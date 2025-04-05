@@ -3,7 +3,7 @@
 
 #include <string>
 
-#if false
+#if true
 #include "../tools/Logger.h"
 
 #else

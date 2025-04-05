@@ -8,3 +8,5 @@ int** StatisticsBucket::delSta = nullptr;
 int** StatisticsBucket::reqSta = nullptr;
 int** StatisticsBucket::wrtSta = nullptr;
 double* StatisticsBucket::rltSta = nullptr;
+int** StatisticsBucket::leftReqs = nullptr;
+int StatisticsBucket::staNum = 0;

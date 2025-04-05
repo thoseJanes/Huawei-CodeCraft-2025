@@ -3,10 +3,11 @@
 #include <set>
 #include "disk.h"
 #include "headPlanner.h"
+#include "readBlock.h"
 
 using namespace std;
 
-typedef BplusTree<4> BpTree;
+typedef BplusTree<4, bool> BpTree;
 struct ReadProfitInfo {
     int score = 0;
     int edge = 0;
@@ -15,15 +16,7 @@ struct ReadProfitInfo {
     int tokensEnd = 0;
 };
 
-struct ReadBlock{
-    int blockLength = 0;
-    int validLength = 0;
-    int reqNum = 0;
-    int edge = 0;
-    int score = 0;
-    int tokensStart = 0;
-    int tokensEnd = 0;
-};
+
 
 class DiskProcessor{
     public:
@@ -36,7 +29,8 @@ class DiskProcessor{
         DiskProcessor(Disk* diskPtr):disk(diskPtr), reqSpace(){
             //为每个头创建一个planner
             for(int i=0;i<HEAD_NUM;i++){
-                planners[i] = new HeadPlanner(diskPtr, diskPtr->heads[i]);
+                planners[i] = new HeadPlanner(this, diskPtr->heads[i]);
+                planners[i]->diskPcs = this;
                 handledActions[i] = {};
             }
             LOG_DISK << "create diskPcs";
@@ -213,28 +207,28 @@ public:
 
 
     void freshNewReqUnits(const Object& obj, std::vector<int> unitIds){
-        bool test = false;
+        //bool test = false;
         for(int r=0;r<REP_NUM;r++){//第几个副本
             DiskProcessor* disk = this->diskGroup[obj.replica[r]];
             for(int i=0;i<unitIds.size();i++){
                 int diskId = obj.replica[r];
                 int unitId = unitIds[i];
-                diskGroup[diskId]->reqSpace.insert(obj.unitOnDisk[r][unitId]);
-                test = true;
+                diskGroup[diskId]->reqSpace.insert(obj.unitOnDisk[r][unitId], nullptr);
+                //test = true;
                 LOG_BplusTreeN(diskId)<<" insert unit req"<<obj.unitOnDisk[r][unitId];
             }
         }
-        if(test){
-            LOG_BplusTree << "\n\ninsert unit of obj "<<obj.objId << " to reqSpace";
-            for(int i=0;i<REP_NUM;i++){
-                LOG_BplusTreeN(obj.replica[i]) << "over insert";
-                LOG_BplusTreeN(obj.replica[i]) << *diskGroup[obj.replica[i]]->reqSpace.getRoot();
-                LOG_BplusTreeN(obj.replica[i]) << "\n(num:" << diskGroup[obj.replica[i]]->reqSpace.getKeyNum() << ")";
+        // if(test){
+        //     LOG_BplusTree << "\n\ninsert unit of obj "<<obj.objId << " to reqSpace";
+        //     for(int i=0;i<REP_NUM;i++){
+        //         LOG_BplusTreeN(obj.replica[i]) << "over insert";
+        //         LOG_BplusTreeN(obj.replica[i]) << *diskGroup[obj.replica[i]]->reqSpace.getRoot();
+        //         LOG_BplusTreeN(obj.replica[i]) << "\n(num:" << diskGroup[obj.replica[i]]->reqSpace.getKeyNum() << ")";
 
-                // LOG_BplusTreeN(obj.replica[i]) << "over insert unit of obj " << obj
-                //      <<" tree:" << diskGroup[obj.replica[i]]->reqSpace;
-            }
-        }
+        //         // LOG_BplusTreeN(obj.replica[i]) << "over insert unit of obj " << obj
+        //         //      <<" tree:" << diskGroup[obj.replica[i]]->reqSpace;
+        //     }
+        // }
 
         
     }
@@ -245,7 +239,7 @@ public:
         for(int i=0;i<unitIds.size();i++){
             int unitId = unitIds[i];
             if(obj.isPlaned(unitId)){
-                int diskId = obj.planReqUnit[unitId];
+                int diskId = obj.planReqDisk[unitId];
                 int headId = obj.planReqHead[unitId];
                 auto rep = std::find(obj.replica, obj.replica+REP_NUM, diskId);
                 int repId = static_cast<int>(rep - obj.replica);
@@ -334,7 +328,7 @@ public:
                 //要不试试取消该磁头的当前读操作？但是又得取消该磁头读取其它obj的操作，而其它obj的某个plan的time可能已经被设置到了某个位置。
                 //diskGroup[diskId]->ignoreRead.push_back(obj.unitOnDisk[i][j]);
                 //取消当前磁头的操作
-                int planDiskId = obj.planReqUnit[j];//找到规划该单元的磁头
+                int planDiskId = obj.planReqDisk[j];//找到规划该单元的磁头
                 int planHeadId = obj.planReqHead[j];
                 LOG_DISKN(planDiskId) << "when delete obj " << obj << " ,obj has been planed";
                 Disk* disk = diskGroup[planDiskId]->disk;

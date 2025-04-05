@@ -214,6 +214,7 @@ public:
 struct DiskUnit{
     int objId = 0;
     int untId = 0;
+    
 };
 
 class Disk:noncopyable{
@@ -243,8 +244,8 @@ private:
     /// <param name="start"></param>
     /// <param name="len"></param>
     void allocate(SpacePieceBlock* space, StorageMode mode, int objId, int* unitOnDisk, std::vector<int>::iterator it, int start, int len){
-        LOG_LINKEDSPACEN(diskId) << "alloc space for obj "<<objId<<
-            " on " <<this->diskId<<" (start:"<<start<<" len:"<<len<<")";
+        //LOG_LINKEDSPACEN(diskId) << "alloc space for obj "<<objId<<
+        //    " on " <<this->diskId<<" (start:"<<start<<" len:"<<len<<")";
         for(int i=0;i<len;i++){
             int pos = (start+i)%spaceSize;
             diskSpace[pos].objId = objId;
@@ -254,7 +255,7 @@ private:
             it++;
         }
         space->alloc(start, len, mode);
-        LOG_LINKEDSPACEN(diskId) << space;
+        //LOG_LINKEDSPACEN(diskId) << space;
     }
     //默认每个对象只会被分配到同一块SpacePieceBlock
     void dealloc(int* unitOnDisk, int objSize, int tag, StorageMode mode){
@@ -281,7 +282,7 @@ private:
                     len+=1;
                     i+=1;
                 }
-                LOG_LINKEDSPACEN(diskId) << "free unit on position " << start<<" with len "<<len;
+                // LOG_LINKEDSPACEN(diskId) << "free unit on position " << start<<" with len "<<len;
                 if (freeSpace[tag].first->inSpace(unitOnDisk[0])) {
                     freeSpace[tag].first->deAlloc(start, len, mode);
                 }
@@ -295,7 +296,7 @@ private:
                 }
                 
                 diskSpace[start].objId = 0;//0是被删除的object
-                LOG_LINKEDSPACEN(diskId) << "free over";
+                //LOG_LINKEDSPACEN(diskId) << "free over";
             }
         }
     }
@@ -335,18 +336,18 @@ public:
             this->heads[i] = new DiskHead(i, spaceSize);
             this->heads[i]->diskId = id;
         }
-        LOG_DISK << "start init space";
+        //LOG_DISK << "start init space";
         diskSpace.initSpace(spacesize);
         for(int i=0;i<spacesize;i++){
             diskSpace[i].objId = -200;
         }
 
-        LOG_DISK << "malloc space for tagUnitNum";
+        //LOG_DISK << "malloc space for tagUnitNum";
         this->tagUnitNum = (int*)malloc(sizeof(int)*M);
         for(int i=0;i<M;i++){
             this->tagUnitNum[i] = 0;
         }
-        LOG_DISK << "malloc space for tagUnitNum over";
+        //LOG_DISK << "malloc space for tagUnitNum over";
 
         //free space linked list
         int start = 0; int len = 0;
@@ -368,10 +369,10 @@ public:
     /// @param unitPos 存储单元的位置
     /// @return 返回存储单元的信息，包括存储单元所属的对象Id及其在对象中的位置Id
     const DiskUnit& getUnitInfo(int unitPos) const {
-        if(unitPos<0||unitPos>=diskSpace.getBufLen()){
-            LOG_DISK << "index " << unitPos <<" out of range!";
-            throw std::out_of_range("buffer space out of range!");
-        }
+        // if(unitPos<0||unitPos>=diskSpace.getBufLen()){
+        //     //LOG_DISK << "index " << unitPos <<" out of range!";
+        //     throw std::out_of_range("buffer space out of range!");
+        // }
         return diskSpace[unitPos];
     }
     //返回从from位置移动到target需要经过的单元距离。
@@ -382,10 +383,14 @@ public:
     //freeSpace相关
     //urgent表明该对象写入时即需要读取。tag表明是否按tag尽量分在同一tag周围（或相关性较大tag周围）。
     void assignSpace(Object& obj ,int repId ,int tag){
-        LOG_LINKEDSPACEN(this->diskId) << "\nstart assign space for obj " << obj << " of tag " << tag;
+        //LOG_LINKEDSPACEN(this->diskId) << "\nstart assign space for obj " << obj << " of tag " << tag;
         int objSize = obj.size;
         int* unitOnDisk = obj.unitOnDisk[repId];
-        std::vector<int> units = formUnitsByOrder(objSize, static_cast<UnitOrder>(repId));
+        //std::vector<int> units = formUnitsByOrder(objSize, static_cast<UnitOrder>(repId));
+        std::vector<int> units = {};
+        for(int i=0;i<objSize;i++){
+            units.push_back(i);
+        }
         //尝试寻找一块合适大小空间。
         auto mode = freeSpace[tag].second;
         auto space = freeSpace[tag].first;
@@ -401,8 +406,8 @@ public:
             }
 
             if (it != nodes->end() && (*it).len >= objSize) {//如果存在能完整放入该对象的空间
-                LOG_LINKEDSPACEN(diskId) << "find an whole space, spaceSize, start " << (*it).start << " len " << (*it).len <<
-                    "for space: " << objSize;
+                //LOG_LINKEDSPACEN(diskId) << "find an whole space, spaceSize, start " << (*it).start << " len " << (*it).len <<
+                //    "for space: " << objSize;
                 int start = (*it).start;
                 allocate(space, mode, obj.objId, unitOnDisk, units.begin(), start, objSize);
             }
@@ -414,10 +419,10 @@ public:
                 #endif
                 int leftSize = objSize;
                 int tempAlloc = 0;
-                LOG_LINKEDSPACEN(diskId) << "can't find continuous space. tolSize:" << objSize;
+                //LOG_LINKEDSPACEN(diskId) << "can't find continuous space. tolSize:" << objSize;
                 while (leftSize > 0) {
                     it = nodes->begin();
-                    LOG_LINKEDSPACEN(diskId) << "alloc start " << (*it).start << " part len:" << (*it).len ;
+                    //LOG_LINKEDSPACEN(diskId) << "alloc start " << (*it).start << " part len:" << (*it).len ;
                     int allocNum = std::min<int>(leftSize, (*it).len);
                     leftSize -= (*it).len;
                     allocate(space, mode, obj.objId, unitOnDisk, units.begin()+tempAlloc, 
@@ -437,8 +442,8 @@ public:
             }
 
             if ((*it).len >= objSize) {//如果存在能完整放入该对象的空间
-                LOG_LINKEDSPACEN(diskId) << "find an whole space, spaceSize, start " << (*it).start << " len " << (*it).len <<
-                    "for space: " << objSize <<" at space end";
+                //LOG_LINKEDSPACEN(diskId) << "find an whole space, spaceSize, start " << (*it).start << " len " << (*it).len <<
+                //    "for space: " << objSize <<" at space end";
                 int start = (*it).start + (*it).len - objSize;
                 allocate(space, mode, obj.objId, unitOnDisk, units.begin(), start, objSize);
             }
@@ -449,11 +454,11 @@ public:
                 #endif
                 int leftSize = objSize;
                 int tempAlloc = 0;
-                LOG_LINKEDSPACEN(diskId) << "can't find continuous space. tolSize:" << objSize;
+                //LOG_LINKEDSPACEN(diskId) << "can't find continuous space. tolSize:" << objSize;
                 while (leftSize > 0) {//默认空间足够，否则可能转一圈。
                     it = nodes->end(); it--;
                     int allocNum = std::min<int>(leftSize, (*it).len);
-                    LOG_LINKEDSPACEN(diskId) << "alloc start " << (*it).start << " part len:" << (*it).len;
+                    //LOG_LINKEDSPACEN(diskId) << "alloc start " << (*it).start << " part len:" << (*it).len;
                     leftSize -= (*it).len;
                     allocate(space, mode, obj.objId, unitOnDisk, units.begin() + tempAlloc,
                         (*it).start + (*it).len - allocNum, allocNum);
@@ -462,8 +467,8 @@ public:
                 }
             }
         }
-        LOG_LINKEDSPACEN(this->diskId) << "over assign space for obj " << obj;
-        LOG_LINKEDSPACEN(this->diskId) <<"assign over" << *space;
+        //LOG_LINKEDSPACEN(this->diskId) << "over assign space for obj " << obj;
+        //LOG_LINKEDSPACEN(this->diskId) <<"assign over" << *space;
         //虽然头数据知道对象数量，但不知道对象大小。
         //可以规划分区。
         //可以通过小size对象来减小磁盘碎片。
@@ -489,7 +494,7 @@ public:
     int calReqUnitNum() {
         int reqUnitNum = 0;
         for (int i = 0; i < M; i++) {
-            reqUnitNum += tagUnitNum[i] * StatisticsBucket::getRelativity(i,i)/100;
+            reqUnitNum += tagUnitNum[i] * StaBkt::getPresentReqLeft(i)/100;
         }
         return reqUnitNum;
     }
