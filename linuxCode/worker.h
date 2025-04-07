@@ -210,10 +210,11 @@ public:
                 LOG_IPCINFO << (*it)->reqId;
             }
 
-            for (int i = 0; i < REP_NUM; i++) {
-                int diskId = obj->replica[i];
-                LOG_BplusTreeN(diskId) << "delete obj " << obj->objId << " reqUnit on deleting it";
-            }
+            // for (int i = 0; i < REP_NUM; i++) {
+            //     int diskId = obj->replica[i];
+            //     LOG_BplusTreeN(diskId) << "delete obj " << obj->objId << " reqUnit on deleting it";
+            // }
+
             //在被请求对象中删除该对象。
             #ifdef ENABLE_OBJECTSCORE
             if(obj->score != 0){
@@ -383,7 +384,9 @@ public:
                 //更新obj内部的Request和单元请求数，更新disk内的请求单元链表。
                 auto overtimeReqUnitsOrder = obj->dropOvertimeRequest(overtimeReqTop, overtimeReqs);//需要在此之前更新价值
                 diskManager.freshOvertimeReqUnits(*obj, overtimeReqUnitsOrder);
+                #ifdef ENABLE_INDICATOR
                 Indicator::loss += SCORE_FACTOR(obj->size)*START_SCORE*104/105;
+                #endif
             }
             overtimeReqTop += 1;//静态变量加一，循环停止时，当前req指向有效的req或者nullptr。
         }

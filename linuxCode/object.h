@@ -7,7 +7,7 @@
 #include "global.h"
 #include "watch.h"
 #include "indicator.h"
-
+#include "bplusTree.h"
 class Object;
 LogStream& operator<<(LogStream& s, const Object& obj);
 
@@ -26,15 +26,20 @@ public:
         this->objId = objId;
         this->reqId = reqId;
         this->createdTime = Watch::getTime();
-        this->unitFlag = (bool*)malloc(size*sizeof(bool));
-        for(int i=0;i<size;i++){
-            this->unitFlag[i] = false;
-        }
+        // this->unitFlag = (bool*)malloc(size*sizeof(bool));
+        // for(int i=0;i<size;i++){
+        //     this->unitFlag[i] = false;
+        // }
         this->is_done = -size + 1;
     }
     bool commitUnit(int unit){
-        if(!this->unitFlag[unit]){
-            this->unitFlag[unit] = true;
+        // if(!this->unitFlag[unit]){
+        //     this->unitFlag[unit] = true;
+        //     is_done += 1;
+        //     return true;
+        // }
+        if((this->unitFlags & (1<<unit))==0){
+            this->unitFlags |= (1<<unit);
             is_done += 1;
             return true;
         }
@@ -64,8 +69,8 @@ public:
     // }
     int objId;
     int reqId;
-    bool* unitFlag;
-    
+    //bool* unitFlag;
+    char unitFlags = 0;
     int is_done;
     int createdTime;
 };
@@ -81,15 +86,16 @@ inline void deleteRequest(int id) {
     requestsPtr[id] = deletedRequest;
 }
 
+typedef BplusTree<4, bool> BpTree;
 class Object{//由object来负责request的管理（创建/删除）
 public:
     const int size;//大小
     const int tag;
     const int objId;
     
-
     //存储时由磁盘设置。
     int replica[REP_NUM];//副本所在磁盘
+    BpTree* reqSpaces[REP_NUM];
     bool scatterStore[REP_NUM];
     int* unitOnDisk[REP_NUM];//相应位置的单元存储在磁盘上的位置
 
@@ -105,28 +111,30 @@ public:
     //价值（优化方向：当前直接使用下一时刻的边缘，动态分配后可以保存多个时刻的边缘。
     #ifdef ENABLE_OBJECTSCORE
     int score = 0;//当前请求剩余的总分数
+    int* coScore;
     #endif
     int edgeValue = 0;//下一个时间步分数降低多少
-    int* coScore;
+    
     int* coEdgeValue;
     std::list<Request*> objRequests = {};//sorted by time//不包含已完成请求。
-
     Object(int id, int size, int tag):objId(id),tag(tag),size(size){
         //this->unitReqNum = (int*)malloc((REP_NUM+3)*size*sizeof(int));//malloc分配0空间是合法操作。
         //分配内存
-        this->unitReqNum = (int*)malloc(size*(REP_NUM+8)*sizeof(int));
+        this->unitReqNum = (int*)malloc(size*(REP_NUM+7)*sizeof(int));
         for(int i=0;i<REP_NUM;i++){
             this->unitOnDisk[i] = this->unitReqNum + size*(i+1);
         }
         this->planReqDisk = this->unitReqNum + size*(REP_NUM+1);
-        this->planReqHead = this->unitReqNum + size*(REP_NUM+7);
-        this->planReqTime = this->unitReqNum + size*(REP_NUM+2);
-        this->unitReqNumOrder = this->unitReqNum + size*(REP_NUM+3);//在commitunit时维护。
-        
-        this->coScore = this->unitReqNum + size*(REP_NUM+4);
-        this->coEdgeValue = this->unitReqNum + size*(REP_NUM+5);
+        this->planReqHead = this->unitReqNum + size*(REP_NUM+2);
+        this->planReqTime = this->unitReqNum + size*(REP_NUM+3);
+        this->planBuffer = this->unitReqNum + size*(REP_NUM+4);
 
-        this->planBuffer = this->unitReqNum + size*(REP_NUM+6);
+        this->coEdgeValue = this->unitReqNum + size*(REP_NUM+5);
+        this->unitReqNumOrder = this->unitReqNum + size*(REP_NUM+6);//在commitunit时维护。
+        #ifdef ENABLE_OBJECTSCORE
+        this->coScore = (int*)malloc(size*sizeof(int));
+        #endif
+        
 
         //初始化
         for(int i=0;i<size;i++){
@@ -135,9 +143,11 @@ public:
             this->planReqHead[i] = -1;
             this->planReqTime[i] = -1;
             this->planBuffer[i] = -1;
-            this->unitReqNumOrder[i] = i;
-            this->coScore[i] = 0;
             this->coEdgeValue[i] = 0;
+            this->unitReqNumOrder[i] = i;
+            #ifdef ENABLE_OBJECTSCORE
+            this->coScore[i] = 0;
+            #endif
         }
 
         for(int i=0;i<REP_NUM;i++){
@@ -162,8 +172,7 @@ public:
         return flag;
     }
     bool isPlaned(int unitId) const {
-        if(this->planReqDisk[unitId]>=0
-            && planReqTime[unitId]>=Watch::getTime()){
+        if(planReqTime[unitId]>=Watch::getTime()){
             return true;
         }
         return false;
@@ -183,14 +192,15 @@ public:
         this->planReqHead[unitId] = headId;
         this->planReqTime[unitId] = Watch::getTime();
     }
-    void plan(int unitId, int diskId, int headId, int timeRequired, bool isOffset){
-        if(isOffset){
-            this->planReqTime[unitId] = timeRequired + Watch::getTime();
-        }else{
-            this->planReqTime[unitId] = timeRequired;
-        }
+    void planAndFreshReqSpace(int unitId, int diskId, int headId, int timeStep){
+        LOG_OBJECT << "plan obj "<<*this<<", ont unit "<<unitId <<" at timestep "<<timeStep
+            <<" for disk "<<diskId<<" and head "<<headId;
+        this->planReqTime[unitId] = timeStep;
         this->planReqDisk[unitId] = diskId;
         this->planReqHead[unitId] = headId;
+        for(int i=0;i<REP_NUM;i++){
+            this->reqSpaces[i]->remove(this->unitOnDisk[i][unitId]);
+        }
     }
     void test_plan(int unitId, int diskId, int headId, int timeRequired, bool isOffset){
         if(isOffset){
@@ -202,8 +212,8 @@ public:
         assert(this->planReqHead[unitId] = headId);
     }
     void clearPlaned(int unitId){
-        this->planReqDisk[unitId] = -1;
-        this->planReqHead[unitId] = -1;
+        // this->planReqDisk[unitId] = -1;
+        // this->planReqHead[unitId] = -1;
         this->planReqTime[unitId] = 0;
     }
     
@@ -316,7 +326,9 @@ public:
 
                 request->calScore(this->size, &getScore, &getEdge);
                 flowDownScoreAndEdge(0, getScore, getEdge);
+                #ifdef ENABLE_INDICATOR
                 Indicator::score += getScore;
+                #endif
                 deleteRequest(request->reqId);
                 it = objRequests.erase(it);//it会指向被删除元素的下一个元素
             }else if(freshed){
@@ -334,6 +346,9 @@ public:
 
         //把请求该单元的请求数、该单元分配给的磁盘都重置。
         this->unitReqNum[unitId] = 0;
+        if(this->objId==8981&&unitId == 0){
+            int test = 0;
+        }
         this->clearPlaned(unitId);
         //更新请求数顺序
         for(int i=0;i<size;i++){
@@ -371,7 +386,7 @@ public:
         std::vector<int> overtimeReqUnits = {};
         auto req = requestsPtr[reqId];
         for(int i=0;i<this->size;i++){//第几个unit
-            if(!req->unitFlag[i]){//如果该请求的该单元还未完成。
+            if((req->unitFlags & (1<<i)) == 0){//!req->unitFlag[i]){//如果该请求的该单元还未完成。
                 this->unitReqNum[i] -= 1;
                 if(this->unitReqNum[i]==0){
                     overtimeReqUnits.push_back(i);
@@ -395,6 +410,9 @@ public:
         
         return overtimeReqUnits;
     }
+    // std::vector<int> dropBusyRequest(int reqId){
+
+    // }
     bool hasRequest(){
         if(this->objRequests.size()>0){
             return true;
@@ -510,7 +528,6 @@ inline Object* createObject(int id, int size, int tag) {
     return object;
 }
 inline void deleteObject(int id) {
-
     Object* object = sObjectsPtr[id];
     LOG_OBJECT << "delete object " << object->objId;
     if (object == deletedObject) {

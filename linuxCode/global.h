@@ -28,6 +28,9 @@
 #ifdef ENABLE_OBJECTEDGE
     //#define ENABLE_OBJECTSCORE
 #endif
+#define ENABLE_INDICATOR
+//#define ENABLE_ACCELERATION
+
 
 #define MAX_DISK_NUM (10 + 1)//磁盘id从0开始
 #define MAX_DISK_SIZE (16384 + 1)

@@ -16,7 +16,7 @@ struct ReadBlock{
     int score = 0;
     #endif
     int tokensEnd = 0;
-    int tokensCost = 0;
+    //int tokensCost = 0;
     int lastReadLength = 0;
     bool inBlock(int key, int spaceSize){
         if(getDistance(key, startPos, spaceSize) < blockLength){
@@ -32,6 +32,7 @@ struct ReadBlock{
         return false;
     }
 };
+
 // typedef BplusTree<4, ReadBlock> BlockTree;
 // class ReadBlockManager:public BlockTree{
 // public:
@@ -91,8 +92,7 @@ struct ReadBlock{
 //         while (invalidReadLen < 11) {//从tempPos开始，是否可以读原本不需要读的块来获取收益。
 //             if (unitInfo.objId>0 && obj != deletedObject && obj != nullptr &&//该处有对象且未被删除
 //                 obj->unitReqNum[unitInfo.untId] > 0 && //判断是否有请求
-//                 (!obj->isPlaned(unitInfo.untId)) &&
-//                 (obj->getPlanedDisk(unitInfo.untId) <0 || obj->getPlanedDisk(unitInfo.untId) == disk->diskId)) {
+//                 (!obj->isPlaned(unitInfo.untId))) {
                 
 //                 multiReadTokensProfit = std::min(0,
 //                     multiReadTokensProfit
@@ -125,9 +125,26 @@ struct ReadBlock{
 //             obj = sObjectsPtr[unitInfo.objId];
 //         }
 //     }
-//     //在ReadBlock内部更新block。不需要更新时间，因为全读。只需要更新请求量、分数、边缘
-//     void freshReadBlock(ReadBlock* block, int key);
+//     //在ReadBlock内部更新block。不需要更新时间，因为全读。只需要更新请求量。分数、边缘如何更新呢？还是临时计算？
+//     //对于分数，每回合考虑到 对象删除/请求发起/请求超时/请求完成.然后用分数减去边缘即可。
+//     //对于边缘，考虑到 
+//         //对象删除（查询size*3个单元所属块，删除对应单元边缘，,可以在split时计算）
+//         //请求发起（查询size*3个单元所属块，增加对应请求边缘）
+//         //请求繁忙（拒绝式繁忙无须更新，中途繁忙需要查询size*3个单元所属块，减去对应请求边缘）
+//         //单元确认（确认单元时删除对应单元边缘,）
+//         //第几阶段（查询leftSize*3个单元所属块，根据请求更新）
+//         //请求超时（查询leftSize*3个单元所属块，删除对应请求边缘）
+//     //相比于直接记录req并查询，确实不清楚哪个花销高。可以先试试。
+//     void freshReadBlock(ReadBlock* block, int newkey){
+//         auto unitInfo = disk->getUnitInfo(newkey);
+//         auto obj = sObjectsPtr[unitInfo.objId];
 
+//         block->reqNum += obj->unitReqNum[unitInfo.untId];
+//     };
+
+//     void splitReadBlock(ReadBlock* block){//某个key被删除了，需要尝试将block分离成多个block
+
+//     }
 //     //如果是确定了使用某个副本，则需要删除另外两个副本。
 //     //或者删除对象时。或者完成read单元时。
 //     //注意流程：先确定副本，删除另外两个副本，然后read，删除剩余的副本

@@ -25,6 +25,7 @@ class DiskProcessor{
         std::array<HeadPlanner*, HEAD_NUM> planners;//优化用磁头规划器，用于临时规划
         array<vector<HeadOperator>, HEAD_NUM> handledActions;//已经开始处理的动作，作为输出到判题器的参数。
         std::vector<int> completedRead;//被头完成的读请求，作为输出到判题器的参数
+        std::vector<int> busyReqId;
         
         DiskProcessor(Disk* diskPtr):disk(diskPtr), reqSpace(){
             //为每个头创建一个planner
@@ -125,7 +126,7 @@ class DiskProcessor{
         ReadProfitInfo getReqProfitUntilJump(int start, int startTokens, std::vector<std::pair<int, int>>& readBlocks);
         ReadBlock getMultiReadBlockAndReqNum(int reqUnit, int startTokens);
 
-
+        ReadBlock getMultiReadBlock(DiskProcessor::ReqIterator& reqIt, int startTokens);
         // bool planMultiReadWithExactInfo();
         // ReadProfitInfo getExactReadProfitUntilJump(int start, int startTokens, std::vector<std::pair<int, int>>& readBlocks);
         // int getMultiReadBlockAndRelatedObjects(int reqUnit, int startTokens, int* getTokensCost, std::set<Object*>* relatedObjects, int* getReqNum);
@@ -147,6 +148,8 @@ public:
     std::vector<DiskProcessor*> diskGroup;
     std::vector<int> doneRequestIds;
     std::map<int, std::vector<Disk*>> tagToDisks;
+
+    
 public:
     //存储一个活动对象的id索引。方便跟进需要查找的单元信息。
     DiskManager(int tagNum){
@@ -165,7 +168,7 @@ public:
         LOG_DISK << "create disk over " << spaceSize;
         diskGroup.push_back(diskPcs);
 
-        diskPcs->reqSpace.id = diskGroup.size();//用于log
+        diskPcs->reqSpace.id = diskGroup.size()-1;//用于log
     }
     ~DiskManager(){
         for(int i=0;i<diskGroup.size();i++){
@@ -235,7 +238,7 @@ public:
     /// @brief 处理超时请求
     /// @param obj 超时请求所属对象
     /// @param unitIds 因为删除该超时请求而被取消的请求单元
-    void freshOvertimeReqUnits(const Object& obj, std::vector<int> unitIds){
+    void freshOvertimeReqUnits(Object& obj, std::vector<int> unitIds){
         for(int i=0;i<unitIds.size();i++){
             int unitId = unitIds[i];
             if(obj.isPlaned(unitId)){
@@ -244,26 +247,32 @@ public:
                 auto rep = std::find(obj.replica, obj.replica+REP_NUM, diskId);
                 int repId = static_cast<int>(rep - obj.replica);
                 this->diskGroup[diskId]->planners[headId]->cancelRead(obj.unitOnDisk[repId][unitId]);
+                obj.clearPlaned(unitId);
+            }else{
+                for(int r=0;r<REP_NUM;r++){
+                    obj.reqSpaces[r]->remove(obj.unitOnDisk[r][unitId]);
+                }
             }
         }
-        for(int r=0;r<REP_NUM;r++){//第几个副本
-            DiskProcessor* diskPcs = this->diskGroup[obj.replica[r]];
-            for(int i=0;i<unitIds.size();i++){
-                int unitId = unitIds[i];
-                LOG_DISK << "remove overtime req unit "<< obj.unitOnDisk[r][unitId]<<" of disk "<<obj.replica[r];
-                diskPcs->reqSpace.remove(obj.unitOnDisk[r][unitIds[i]]);
-            }
-        }
+        // for(int r=0;r<REP_NUM;r++){//第几个副本
+            
+        //     for(int i=0;i<unitIds.size();i++){
+        //         int unitId = unitIds[i];
+        //         LOG_DISK << "remove overtime req unit "<< obj.unitOnDisk[r][unitId]<<" of disk "<<obj.replica[r];
+                
+        //     }
+        // }
     }
     //在请求单元链表中删除obj的所有第unitOrder个unit的副本。
-    void removeObjectReqUnit(const Object& obj, int unitId){
-        for(int i=0;i<REP_NUM;i++){
-            int diskId = obj.replica[i];
-            int unitPos = obj.unitOnDisk[i][unitId];
-            LOG_BplusTreeN(diskId) << "\n\nremove obj " << obj.objId << " done request unit "<<unitPos <<" of disk " <<diskId;
-            diskGroup[diskId]->reqSpace.remove(unitPos);
-        }
-    }
+    // void removeObjectReqUnit(const Object& obj, int unitId){
+    //     for(int i=0;i<REP_NUM;i++){
+    //         int diskId = obj.replica[i];
+    //         int unitPos = obj.unitOnDisk[i][unitId];
+    //         LOG_BplusTreeN(diskId) << "\n\nremove obj " << obj.objId << " done request unit "<<unitPos <<" of disk " <<diskId;
+    //         diskGroup[diskId]->reqSpace.remove(unitPos);
+    //     }
+    // }
+
     void assignSpace(Object& obj){
         //首先挑出3块空间够且负载低的磁盘，然后选择存储位置，然后选择存储顺序。原则如下：
         /*
@@ -302,6 +311,8 @@ public:
                 if (j < disks.size()) {
                     disks[j]->assignSpace(obj, repAssigned, tagChose);
                     obj.replica[repAssigned] = disks[j]->diskId;
+                    obj.reqSpaces[repAssigned] = &diskGroup[obj.replica[repAssigned]]->reqSpace;
+                    assert(obj.reqSpaces[repAssigned]->id == obj.replica[repAssigned]);
 		            jList.push_back(j);
                     j++; repAssigned++;
                 }
@@ -322,7 +333,7 @@ public:
         LOG_DISK << "free space of obj "<<obj.objId;
         //如果存在请求则删除该请求。
         for (int j = 0; j < obj.size; j++) {
-            if (obj.unitReqNum[j] > 0 && obj.isPlaned(j)) {
+            if (obj.isPlaned(j)) {
                 //该单元已被plan，但是将被删除。很可能造成出错，所以如果存在这种情况，应该无视某些读完成的消息？
                 // 但是如果后面又有东西在相应规划期内读它，又会造成两个磁头重复读一个磁盘。
                 //要不试试取消该磁头的当前读操作？但是又得取消该磁头读取其它obj的操作，而其它obj的某个plan的time可能已经被设置到了某个位置。
@@ -339,20 +350,19 @@ public:
                 diskGroup[planDiskId]->planners[planHeadId]->cancelRead(readPos);
                 
                 LOG_DISKN(planDiskId) << "get canceled read:" << readPos;
-                auto unitInfo = disk->getUnitInfo(readPos);
-                auto objPtr = sObjectsPtr[unitInfo.objId];
-                objPtr->clearPlaned(unitInfo.untId);
-                LOG_DISKN(planDiskId) << "fresh obj " << *objPtr << " ,obj plan has been cleared";
-            }
-            if (obj.unitReqNum[j] > 0) {
-                this->removeObjectReqUnit(obj, j);
-            }
-        }
-        for (int j = 0; j < obj.size; j++) {
-            if (obj.unitReqNum[j] > 0 && obj.isPlaned(j)) {
-                throw std::logic_error("obj has planed unit!!please delete it first!!");
+                obj.clearPlaned(j);
+                LOG_DISKN(planDiskId) << "fresh obj " << obj << " ,obj plan has been cleared";
+            }else if(obj.unitReqNum[j] > 0){
+                for(int i=0;i<REP_NUM;i++){
+                    obj.reqSpaces[i]->remove(obj.unitOnDisk[i][j]);
+                }
             }
         }
+        // for (int j = 0; j < obj.size; j++) {
+        //     if (obj.unitReqNum[j] > 0 && obj.isPlaned(j)) {
+        //         throw std::logic_error("obj has planed unit!!please delete it first!!");
+        //     }
+        // }
         for(int i=0;i<REP_NUM;i++){
             int diskId = obj.replica[i];
             Disk* disk = diskGroup[diskId]->disk;
@@ -366,6 +376,9 @@ public:
     void freshDoneRequestIds(Disk* disk, std::vector<int> completedRead){
         for(int i=0;i<completedRead.size();i++){
             int readUnit = completedRead[i];
+            if(readUnit == 4479 && Watch::getTime()==11856){
+                int test = 0;
+            }
             auto unitInfo = disk->getUnitInfo(readUnit);
             Object* obj = sObjectsPtr[unitInfo.objId];
             //如果这回合刚读完之前的一个行动，但是这回合对应的对象被删除了，那就无效了。
@@ -375,7 +388,8 @@ public:
                     LOG_BplusTreeN(diskId) << "on read " << readUnit << " remove unit of " << *obj;
                 }
                 obj->commitUnit(unitInfo.untId, &doneRequestIds);
-                this->removeObjectReqUnit(*obj, unitInfo.untId);
+                //已经在plan时删除了reqUnit
+                //this->removeObjectReqUnit(*obj, unitInfo.untId);
             }
         }
     }

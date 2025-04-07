@@ -25,6 +25,7 @@ log/
 .vscode/
 data/*.in
 data/__pycache__
+test/
 
 note/
 

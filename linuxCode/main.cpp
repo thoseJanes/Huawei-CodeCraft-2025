@@ -95,17 +95,17 @@ int main()
     //文件名/序号数量/是否打印时间帧
     const std::vector<std::tuple<std::string, int, bool>> logFiles = {
     // {"main", -1, true},
-    // {"disk",N, true},
-    // {"BplusTree",N, true},
+    {"disk",N, true},
+    {"BplusTree",N, true},
     // {"circularLinkedList",N, true},
-    // {"worker",-1, true},
+    {"worker",-1, true},
     // {"bucketData",-1, true},
-    // {"request",-1, true},
-    // {"object",-1, true},
-    // {"actions",N, true},
-    // {"planner",N, true},
+    {"request",-1, true},
+    {"object",-1, true},
+    {"actions",N, true},
+    {"planner",N, true},
     //{"ipcInfo",-1, true},
-    //{"bPlusTreeTest", -1, true},
+    {"bPlusTreeTest", -1, true},
     {"score", -1, false}
     };
     //addLogFiles(logFiles);
@@ -123,12 +123,12 @@ int main()
     LOG_INIT << "start loop";
 
     for (int t = 1; t <= T + EXTRA_TIME; t++) {
-        if (t == 1) {
-          addLogFiles(logFiles);
-        }
+        // if(t==1350){
+        //     addLogFiles(logFiles);
+        // }
         Watch::clock();
         worker.correctWatch();
-        //logTimeStamp(logFiles);
+        logTimeStamp(logFiles);
         worker.freshDiskTokens();
         #ifdef ENABLE_OBJECTSCORE
         worker.freshObjectScore();//必须在clearOvertimeReq之前。

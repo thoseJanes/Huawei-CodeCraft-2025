@@ -685,9 +685,7 @@ public:
     }
 
     void remove(int key) {
-        if (key == 1051 && id == 5) {
-            int k = 0;
-        }
+        
         LOG_BplusTreeN(id) << "remove key" << key;
         if (root == nullptr) {
             LOG_BplusTree << "error: empty tree!";
@@ -702,6 +700,7 @@ public:
         while (!node->isLeaf) {
             int pos = node->searchKey(key);
             parentPos.push(pos);
+            assert(pos != node->keyNum);
             if (pos == node->keyNum) {//超过node的最大值
                 LOG_BplusTreeN(this->id) << "fail: key " << key<< " is not in tree! 1";
                 return;
@@ -710,6 +709,7 @@ public:
         }
         keyPos = node->searchKey(key);
         bool isMaxKeyOfNode = (keyPos == node->keyNum - 1);
+        assert(node->keys[keyPos] == key);
         if (node->keys[keyPos] != key) {
             LOG_BplusTreeN(this->id) <<"keypos:"<< keyPos<<" ,node" << *node <<" ,remove key"<< key;
             LOG_BplusTreeN(this->id) << "fail: key " << key << " is not in tree! 2";

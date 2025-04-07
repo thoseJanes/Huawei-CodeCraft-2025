@@ -74,16 +74,16 @@ bool DiskProcessor::planMultiReadByReqNum(int headId) {//每次选择一个请�
     //LOG_PLANNER << "planner " << this->disk->diskId << " " << planner->getDiskId() <<" planning ";
     for (int k = 0; k < readBlocks.size(); k++) {
         int start = readBlocks[k].first;
+        for (int j = 0; j < readBlocks[k].second; j++) {
+            planner->appendMoveToAllReadAndPlan((start + j) % disk->spaceSize);
+            LOG_PLANNER  << " plan for unit "
+                << (start + j) % disk->spaceSize;
+            LOG_PLANNERN(planner->getDiskId()) << " plan for unit "
+                << (start + j) % disk->spaceSize;
+        }
         //但是只把当前时间步相关的行动入栈并等待执行。
-        if (Watch::toTimeStep(planner->getLastActionNode().endTokens) <= Watch::getTime()) {
+        if (Watch::toTimeStep(planner->getLastActionNode().endTokens) > Watch::getTime()) {
             //以readBlock为单元加入读。
-            for (int j = 0; j < readBlocks[k].second; j++) {
-                planner->appendMoveToAllReadAndPlan((start + j) % disk->spaceSize);
-                LOG_PLANNER  << " plan for unit "
-                    << (start + j) % disk->spaceSize;
-                LOG_PLANNERN(planner->getDiskId()) << " plan for unit "
-                    << (start + j) % disk->spaceSize;
-            }
         }
         // else {//把刚分配的部分保护起来。
         //     for (int j = 0; j < readBlocks[k].second; j++) {
@@ -104,6 +104,8 @@ bool DiskProcessor::planMultiReadByReqNum(int headId) {//每次选择一个请�
 }
 
 int DiskProcessor::calNextStart(std::vector<std::pair<int, int>>& readBlocks) {
+    //return (readBlocks.back().first + readBlocks.back().second) % disk->spaceSize;
+
     if (readBlocks.size() <= 1) {
         return (readBlocks.front().first + readBlocks.front().second) % this->disk->spaceSize;
     }
@@ -200,6 +202,7 @@ ReadBlock DiskProcessor::getMultiReadBlockAndReqNum(int reqUnit, int startTokens
             #endif
         }
         else {
+            
             multiReadTokensProfit =
                 multiReadTokensProfit
                 - getReadConsumeAfterN(tempBlock.blockLength) + 1;
@@ -210,7 +213,11 @@ ReadBlock DiskProcessor::getMultiReadBlockAndReqNum(int reqUnit, int startTokens
             tempBlock.blockLength++;
         }
         if (multiReadTokensProfit >= 0) {//没有连读损耗
+            // if(tempBlock.tokensEnd - startTokens > G*6){
+            //     return readBlock;
+            // }//应该直接返回，这样获取的就是上一个readBlock
             readBlock = tempBlock;
+            
         }
         tempPos = (tempPos + 1) % this->disk->spaceSize; //查看下一个位置是否未被规划。
         unitInfo = disk->getUnitInfo(tempPos);
@@ -235,10 +242,13 @@ void DiskManager::testMultiReadStrategy() {
         diskPcs = this->diskGroup[i];
         for(int j=0;j<HEAD_NUM;j++){
             if (diskPcs->disk->heads[j]->completeAction(&diskPcs->handledActions[j], &diskPcs->completedRead)) {
+                assert(diskPcs->disk->heads[j]->presentTokens == G);
                 //LOG_DISK << "disk " << diskPcs->disk->diskId << " completeAction";
                 if (Watch::toTimeStep(diskPcs->planners[j]->getLastActionNode().endTokens) <= Watch::getTime() + PLAN_STEP - 1
-                    && diskPcs->reqSpace.getKeyNum() > 0) {
+                        && diskPcs->reqSpace.getKeyNum() > 0) {
                     diskPcsVec.push_back({diskPcs, j});
+                }else{
+                    diskPcs->planners[j]->freshVRead();
                 }
             }
         }

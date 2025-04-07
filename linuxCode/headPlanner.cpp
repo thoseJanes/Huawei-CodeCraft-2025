@@ -8,7 +8,7 @@ void HeadPlanner::appendMoveToUnplannedReadAndPlan(int unitPos) {
     if (!obj->isPlaned(unitInfo.untId) && obj->isRequested(unitInfo.untId) ) {
         appendMoveTo(unitPos);
         appendAction({ READ, -1 });
-        obj->plan(unitInfo.untId, this->diskId, head->headId, this->getLastActionNode().endTokens, false);
+        obj->planAndFreshReqSpace(unitInfo.untId, this->diskId, head->headId, Watch::toTimeStep(this->getLastActionNode().endTokens));
     }
     else {
         //appendMoveTo(unitPos);
@@ -19,22 +19,29 @@ void HeadPlanner::appendMoveToUnplannedReadAndPlan(int unitPos) {
 
 void HeadPlanner::appendMoveToAllReadAndPlan(int unitPos) {
     auto unitInfo = this->diskPcs->disk->getUnitInfo(unitPos);
-    if (unitInfo.objId < 0) {//空单元
+    if (unitInfo.objId <= 0) {//空单元
         appendMoveTo(unitPos);
         appendAction({ VREAD, -1 });
         return;
     }
     auto obj = sObjectsPtr[unitInfo.objId];
-    if (obj!=deletedObject && !obj->isPlaned(unitInfo.untId) && obj->isRequested(unitInfo.untId)) {
+    if (!obj->isPlaned(unitInfo.untId) && obj->isRequested(unitInfo.untId)) {
+        if(Watch::getTime() == 1355 && unitPos == 4685 && this->diskId==4){
+            int test = 0;
+        }
         appendMoveTo(unitPos);
         appendAction({ READ, -1 });
-        obj->plan(unitInfo.untId, this->diskId, head->headId, Watch::toTimeStep(this->getLastActionNode().endTokens), false);
-        
-        for(int i=0;i<REP_NUM;i++){
-            int diskId = obj->replica[i];
-            int unitPos = obj->unitOnDisk[i][unitInfo.untId];
-            diskPcs->reqSpace.remove(unitPos);
-        }
+        int planTimeStep = Watch::toTimeStep(this->getLastActionNode().endTokens);
+        // 是否要在这时判断过期呢？值不值？
+        // auto earliestReq = obj->objRequests.front();
+        // auto reqId = obj->objRequests.begin();
+        // while(planTimeStep > (*reqId)->createdTime + EXTRA_TIME - 1 && reqId != obj->objRequests.end()){
+        //     if(((*reqId)->unitFlags&(1<<unitInfo.untId))==0){
+        //         diskPcs->busyReqId.push_back((*reqId)->reqId);
+        //         reqId ++;
+        //     }
+        // }
+        obj->planAndFreshReqSpace(unitInfo.untId, this->diskId, head->headId, planTimeStep);
     }
     else {
         appendMoveTo(unitPos);
@@ -43,6 +50,34 @@ void HeadPlanner::appendMoveToAllReadAndPlan(int unitPos) {
         //appendAction({ VREAD, -1 });
     }
 }
+
+void HeadPlanner::freshVRead(){//如果存在VRead被请求，则将其转换为Read并进行plan
+    for(auto it = actionNodes.begin();it != actionNodes.end();it++){
+        if((*it).action.action == VREAD){
+            auto unitInfo = diskPcs->disk->getUnitInfo(((*it).endPos-1+spaceSize)%spaceSize);
+            if(unitInfo.objId>0 && 
+                    sObjectsPtr[unitInfo.objId]->unitReqNum[unitInfo.untId]>0
+                    && (!sObjectsPtr[unitInfo.objId]->isPlaned(unitInfo.untId))){
+                sObjectsPtr[unitInfo.objId]->planAndFreshReqSpace(unitInfo.untId, diskId, head->headId, Watch::toTimeStep((*it).endTokens));
+                (*it).action.action = READ;
+            }
+        }
+    }
+}
+
+void HeadPlanner::cancelAllAction(){
+        for(auto it = std::next(actionNodes.begin());it!=actionNodes.end();it++){
+            auto unitInfo = diskPcs->disk->getUnitInfo(((*it).endPos-1)%spaceSize);
+            auto obj = sObjectsPtr[unitInfo.objId];
+            if((*it).action.action == READ && obj->isRequested(unitInfo.untId)){
+                for(int i=0;i<REP_NUM;i++){
+                    obj->reqSpaces[i]->insert(obj->unitOnDisk[i][unitInfo.untId], nullptr);
+                    obj->clearPlaned(unitInfo.untId);
+                }
+            }
+        }
+        actionNodes.erase(std::next(actionNodes.begin()),actionNodes.end());
+    }
 
 
 void HeadPlanner::insertUnplannedReadAsBranch(int unitPos, int* getReadOverTokens, int* getScoreLoss) {
@@ -111,7 +146,7 @@ void HeadPlanner::mergeUnplannedReadBranch(int unitPos) {
             int readPos = ((*branchInfo.first).endPos - 1+ spaceSize)%spaceSize;
             auto unitInfo = diskPcs->disk->getUnitInfo(readPos);
             LOG_PLANNER << "plan unit " << unitInfo.untId<<" for obj "<<unitInfo.objId<< ", time:"<<newPlanedTime<<" on disk "<<diskId;
-            sObjectsPtr[unitInfo.objId]->plan(unitInfo.untId, this->diskId, head->headId, newPlanedTime, false);
+            sObjectsPtr[unitInfo.objId]->planAndFreshReqSpace(unitInfo.untId, this->diskId, head->headId, newPlanedTime);
         }
         branchInfo.first++;
     }

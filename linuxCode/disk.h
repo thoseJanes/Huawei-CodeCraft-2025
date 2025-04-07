@@ -62,7 +62,7 @@ public:
     int presentTokens = G;
     int tokensOffset = 0;//在上个回合花的下个回合的令牌。
     HeadOperator toBeComplete = {NONE, 0};
-    DiskHead(int id, int spacesize):headId(id),spaceSize(spacesize){LOG_DISK<< "init head";}
+    DiskHead(int id, int spacesize):headId(id),spaceSize(spacesize){}
     void freshTokens(){
         this->presentTokens = G - this->tokensOffset;
         this->tokensOffset = 0;
@@ -194,6 +194,7 @@ public:
         }
         return false;
     };
+    
     //把取消的Read提取出来。其它操作没有必要提取。READ会对ReqUnit造成影响。
     void cancelAction(std::vector<int>* canceledRead) {
         if (this->tokensOffset) {
@@ -214,7 +215,6 @@ public:
 struct DiskUnit{
     int objId = 0;
     int untId = 0;
-    
 };
 
 class Disk:noncopyable{
@@ -368,7 +368,7 @@ public:
     /// @brief 通过存储单元位置返回存储单元信息
     /// @param unitPos 存储单元的位置
     /// @return 返回存储单元的信息，包括存储单元所属的对象Id及其在对象中的位置Id
-    const DiskUnit& getUnitInfo(int unitPos) const {
+    const DiskUnit getUnitInfo(int unitPos) const {
         // if(unitPos<0||unitPos>=diskSpace.getBufLen()){
         //     //LOG_DISK << "index " << unitPos <<" out of range!";
         //     throw std::out_of_range("buffer space out of range!");

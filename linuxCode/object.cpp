@@ -38,10 +38,12 @@ LogStream& operator<<(LogStream& s, const Object& obj){
     for (int j = 0; j < obj.size; j++) {
         s << obj.planBuffer[j] << ", ";
     }
+    #ifdef ENABLE_OBJECTSCORE
     s << ", coscore:";
     for (int j = 0; j < obj.size; j++) {
         s << obj.coScore[j] << ", ";
     }
+    #endif
     s << ", coedge:";
     for (int j = 0; j < obj.size; j++) {
         s << obj.coEdgeValue[j] << ", ";

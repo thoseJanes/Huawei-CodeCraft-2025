@@ -22,7 +22,6 @@ private:
     friend LogStream& operator<<(LogStream& s, HeadPlanner& headPlanner);
     //属于哪个头的规划器
     DiskHead* head;
-    
     //分支树
     std::map<int, std::pair<std::list<ActionNode>::iterator, HeadPlanner*>> readBranches = {};
     //分支行动。分别为：增加读的位置/创建分支的位置/分支策略。
@@ -234,7 +233,9 @@ public:
             return;//就在当前位置。
         }
     }
-    
+    //如果存在VRead被请求，则将其转换为Read并进行plan
+    void freshVRead();
+    void cancelAllAction();
     // int getTokenCost(){return tokenCost;}
     // int getTimeCost(){return timeCost;}
     // int getNextReadConsume(){return nextReadConsume;}
@@ -256,9 +257,9 @@ public:
         LOG_PLANNERN(diskId) << "cancel read " << unitPos;
         ActionNode node;
         auto it = std::next(this->actionNodes.begin());
-        int unitEnd = (unitPos + 1 + spaceSize) % spaceSize;
+        int unitEnd = (unitPos + 1) % spaceSize;
         while(it!=actionNodes.end()) {
-            if (((*it).action.action == READ|| (*it).action.action == VREAD) && (*it).endPos == unitEnd) {
+            if ((*it).endPos == unitEnd && (*it).action.action == READ) {
                 break;
             }
             it++;
@@ -268,25 +269,30 @@ public:
         }
         //it为需要删除的节点。
         std::list<ActionNode> tempNodes = {};
-        it = actionNodes.erase(it);
-        tempNodes.splice(tempNodes.begin(), actionNodes, it, actionNodes.end());
+        (*it).action.action = VREAD;//暂时只这样处理。因为这里存在bug：
+        //由于我判断了是将READ替换为VREAD还是PASS，但是这也会影响到之后的判断，
+        //譬如之后也要将一部分VREAD替换为PASS才有效益。
+        //此外，变化的READ完成时间也会影响req。因此如果采用上述方式也需要重新plan
+
+        // it = actionNodes.erase(it);
+        // tempNodes.splice(tempNodes.begin(), actionNodes, it, actionNodes.end());
         
-        //删除read之前的移动操作
-        it = actionNodes.end(); it--;
-        while (((*it).action.action != READ && (*it).action.action != VREAD) && (*it).action.action != START) {
-            it = actionNodes.erase(it);
-            it--;
-        }
-        //更新后面的节点
-        it = tempNodes.begin();
-        auto endIt = tempNodes.end();
-        while (it != endIt) {
-            if ((*it).action.action == READ || (*it).action.action == VREAD) {
-                appendMoveTo(((*it).endPos - 1+spaceSize)%spaceSize, true, &it, &endIt);
-                appendAction((*it).action, true);
-            }
-            it++;
-        }
+        // //删除read之前的移动操作
+        // it = actionNodes.end(); it--;
+        // while (((*it).action.action != READ && (*it).action.action != VREAD) && (*it).action.action != START) {
+        //     it = actionNodes.erase(it);
+        //     it--;
+        // }
+        // //更新后面的节点
+        // it = tempNodes.begin();
+        // auto endIt = tempNodes.end();
+        // while (it != endIt) {
+        //     if ((*it).action.action == READ || (*it).action.action == VREAD) {
+        //         appendMoveTo(((*it).endPos - 1+spaceSize)%spaceSize, true, &it, &endIt);
+        //         appendAction((*it).action, true);
+        //     }
+        //     it++;
+        // }
     }
     
 
@@ -316,17 +322,28 @@ public:
         auto nextIt = std::next(lastIt);
         LOG_PLANNERN(diskId) << "\nexcute on plan:"<<actionNodes;
         while (nextIt != actionNodes.end() && Watch::toTimeStep((*nextIt).endTokens) <= Watch::getTime()) {
+            #ifdef ENABLE_ACCELERATION
+            lastIt++;
+            nextIt++;
+            handledOperation->push_back((*lastIt).action);
+            if((*lastIt).action.action == READ){
+                completedRead->push_back(((*lastIt).endPos-1+spaceSize)%spaceSize);
+            }
+            #else
             LOG_PLANNERN(diskId) << "before time:" << Watch::toTimeStep((*nextIt).endTokens) << ",end time:" << Watch::getTime();
             lastIt++;
             nextIt++;
             assert((*lastIt).action.param >= 0);
+            
             if (!head->beginAction((*lastIt).action)) {
                 throw std::logic_error("can not begin?!");
             }
             if (!head->completeAction(handledOperation, completedRead)) {
                 throw std::logic_error("can not complete?!");
             }
+            
             LOG_PLANNERN(diskId) << "excute operation " << *lastIt;
+            #endif
         }
         if (lastIt == actionNodes.begin()) {
             return;
@@ -334,16 +351,26 @@ public:
         //lastIt是最后一个执行的行动。
         this->actionNodes.front().endPos = (*lastIt).endPos;
         this->actionNodes.front().endTokens = (*lastIt).endTokens;
-        if (nextIt != actionNodes.end() && (*nextIt).action.action == PASS && head->presentTokens > 0) {
-            HeadOperator operation = { PASS, head->presentTokens };
+        #ifdef ENABLE_ACCELERATION
+        int presentTokens = Watch::getTime()*G - (*lastIt).endTokens;
+        #else
+        int presentTokens = Watch::getTime()*G - (*lastIt).endTokens;
+        assert(presentTokens == head->presentTokens);
+        #endif
+        if (nextIt != actionNodes.end() && (*nextIt).action.action == PASS && presentTokens > 0) {
+            HeadOperator operation = { PASS, presentTokens };
             this->actionNodes.front().endTokens += operation.passTimes;
             this->actionNodes.front().endPos += operation.passTimes;
             this->actionNodes.front().endPos %= spaceSize;
+            this->actionNodes.front().action.aheadRead = 0;
+            nextIt->action.passTimes -= operation.passTimes;
+
+            #ifdef ENABLE_ACCELERATION
+            handledOperation->push_back(operation);
+            #else
             head->beginAction(operation);
             head->completeAction(handledOperation, completedRead);
-            this->actionNodes.front().action.aheadRead = 0;
-            //lastIt++;
-            nextIt->action.passTimes -= operation.passTimes;
+            #endif
         }
         else {
             if ((*lastIt).action.action == READ || (*lastIt).action.action == VREAD) {
