@@ -1,0 +1,79 @@
+{
+	"formatVersion": 2,
+	"appVersion": "0.63.7",
+	"files": [
+		{
+			"noteId": "3yxJWf6jttqA",
+			"notePath": [
+				"3yxJWf6jttqA"
+			],
+			"isClone": false,
+			"title": "README",
+			"notePosition": 160,
+			"prefix": null,
+			"isExpanded": true,
+			"type": "text",
+			"mime": "text/html",
+			"format": "markdown",
+			"dataFileName": "README.md",
+			"dirFileName": "README",
+			"noImport": false,
+			"attributes": [
+				{
+					"type": "relation",
+					"name": "internalLink",
+					"value": "fDspOH7QyDFI",
+					"isInheritable": false,
+					"position": 10
+				}
+			],
+			"attachments": [
+				{
+					"attachmentId": "Duexvt7Z3NvH",
+					"title": "140252277.jpg",
+					"role": "image",
+					"mime": "image/jpg",
+					"position": 10,
+					"dataFileName": "README_140252277.jpg"
+				},
+				{
+					"attachmentId": "LCFdZ3GanpTQ",
+					"title": "176469338.png",
+					"role": "image",
+					"mime": "image/png",
+					"position": 10,
+					"dataFileName": "README_176469338.png"
+				},
+				{
+					"attachmentId": "MPrppnCDZTsP",
+					"title": "60810304.jpg",
+					"role": "image",
+					"mime": "image/jpg",
+					"position": 10,
+					"dataFileName": "README_60810304.jpg"
+				}
+			],
+			"children": [
+				{
+					"noteId": "fDspOH7QyDFI",
+					"notePath": [
+						"3yxJWf6jttqA",
+						"fDspOH7QyDFI"
+					],
+					"isClone": false,
+					"title": "规划策略",
+					"notePosition": 10,
+					"prefix": null,
+					"isExpanded": false,
+					"type": "text",
+					"mime": "text/html",
+					"format": "markdown",
+					"dataFileName": "规划策略.md",
+					"noImport": false,
+					"attributes": [],
+					"attachments": []
+				}
+			]
+		}
+	]
+}
