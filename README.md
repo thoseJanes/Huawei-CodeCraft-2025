@@ -8,4 +8,4 @@ thoseJanes编写了一个长期规划策略，代码主要位于linuxCode文件�
 
 在复赛练习赛时，thoseJanes编写的策略得分较好，但在复赛正式赛时，题目进行了更新，磁盘时间步令牌数会随时间桶变化，长期规划方法依赖于均匀时间步，题目更新三小时内没能成功修正运行，**实际上成功运行的是Pierce-qiang编写的精悍策略**。
 
-thoseJanes采用的策略介绍见：[规划策略](README/规划策略.pptx)
+thoseJanes采用的策略介绍见：[规划策略](README/thoseJanes/2025华为软挑策略整理.md)
